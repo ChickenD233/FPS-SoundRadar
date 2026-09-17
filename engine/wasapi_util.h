@@ -41,6 +41,13 @@ Microsoft::WRL::ComPtr<IMMDevice> FindEndpointByName(EDataFlow flow,
 // Returns the default render/capture endpoint for eMultimedia.
 Microsoft::WRL::ComPtr<IMMDevice> GetDefaultEndpoint(EDataFlow flow);
 
+// Capture endpoint selection rule (config key capture_device):
+// - default "SoundRadar": require "SoundRadar" AND "loopback"; if no match,
+//   fall back to "Voicemeeter Out B1", then "Voicemeeter Output" (Potato B1 bus).
+// - any other non-empty value: plain case-insensitive substring.
+// Returns matching endpoints in priority order (empty = nothing matched).
+std::vector<DeviceInfo> SelectCaptureEndpoints(const std::wstring& configValue);
+
 // Inspect a mix/negotiated format. Returns false if unsupported for this engine:
 // we accept 16-bit PCM or 32-bit float, any channel count.
 struct PcmFormat {

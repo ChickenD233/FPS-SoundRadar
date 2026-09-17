@@ -67,15 +67,23 @@ void PrintUsage() {
         "  --help                 this text\n");
 }
 
-void ListDevices() {
+void ListDevices(const std::wstring& captureDevice) {
     sr::ComInit com;
     if (!com.Ok()) {
         fwprintf(stderr, L"COM init failed\n");
         return;
     }
+    // mark the capture endpoint the current selection rule would pick
+    std::vector<sr::DeviceInfo> candidates = sr::SelectCaptureEndpoints(captureDevice);
+    std::wstring selectedId = candidates.empty() ? L"" : candidates.front().id;
+
     std::printf("capture endpoints:\n");
     for (const auto& d : sr::EnumerateEndpoints(eCapture))
-        std::printf("  %s%s\n", sr::ToUtf8(d.name).c_str(), d.isDefault ? "  [default]" : "");
+        std::printf("  %s%s%s\n", sr::ToUtf8(d.name).c_str(),
+                    d.isDefault ? "  [default]" : "",
+                    (!selectedId.empty() && d.id == selectedId) ? "  (selected)" : "");
+    if (selectedId.empty())
+        std::printf("  (no endpoint matches the capture_device rule)\n");
     std::printf("render endpoints:\n");
     for (const auto& d : sr::EnumerateEndpoints(eRender))
         std::printf("  %s%s\n", sr::ToUtf8(d.name).c_str(), d.isDefault ? "  [default]" : "");
@@ -122,83 +130,88 @@ HWND WaitForOverlayWindow(const sr::Overlay& overlay, int timeoutMs) {
 }
 
 // Full app: audio pipeline + overlay + tray. Used by both console and --tray.
-int RunApp(sr::AppConfig& cfg, const std::wstring& configPath) {
+int RunApp(sr::AppConfig& cfg, const std::wstring& configPath, bool trayMode) {
     sr::ComInit com;
     if (!com.Ok()) {
         fwprintf(stderr, L"COM init failed\n");
         return 1;
     }
 
-    sr::CaptureClient cap;
-    std::wstring err;
-    if (!cap.Init(err)) {
-        if (GetConsoleWindow())
-            std::fprintf(stderr, "%s\n", sr::ToUtf8(err).c_str());
-        else
-            MessageBoxW(nullptr, err.c_str(), L"SoundRadar", MB_ICONERROR | MB_OK);
-        return 1;
-    }
-    sr::RenderClient ren;
-    if (!ren.Init(cfg.outputDevice, err)) {
-        if (GetConsoleWindow())
-            std::fprintf(stderr, "render init failed: %s\n", sr::ToUtf8(err).c_str());
-        else
-            MessageBoxW(nullptr, err.c_str(), L"SoundRadar", MB_ICONERROR | MB_OK);
-        return 1;
-    }
-
-    const sr::CaptureClient::Format& cf = cap.GetFormat();
-    const sr::RenderClient::Format& rf = ren.GetFormat();
-    std::printf("capture : %s (%u Hz, %u ch, buffer %.1f ms)\n", sr::ToUtf8(cap.DeviceName()).c_str(),
-                cf.sampleRate, cf.channels, cf.bufferFrames * 1000.0 / cf.sampleRate);
-    std::printf("render  : %s (%s, %u Hz, %u ch, buffer %.1f ms)\n",
-                sr::ToUtf8(ren.DeviceName()).c_str(), rf.exclusive ? "EXCLUSIVE" : "shared",
-                rf.sampleRate, rf.channels, rf.bufferMs);
-    std::printf("running - tray icon for controls, Ctrl+C to stop\n\n");
-
     sr::g_downmixMode.store(static_cast<int>(cfg.downmix.mode));
     sr::g_classifyEnabled.store(cfg.classifyEnabled);
 
+    sr::CaptureClient cap;
+    sr::RenderClient ren;
     sr::RingBuffer ring(8192);
     sr::Analyzer analyzer(cfg.analysis);
     sr::Classifier8 classifier; // experimental, per-channel, capture thread
     sr::SharedMeters meters;
-
     sr::Overlay overlay;
-    if (cfg.overlay.enabled) overlay.Start(cfg.overlay, &meters, g_quit);
+    std::thread capThread, renThread;
+    bool pipelineRunning = false;
 
-    std::thread capThread([&] {
-        cap.Run([&](const float* frames, uint32_t n, LONGLONG) {
-            sr::AnalysisFrame fr;
-            analyzer.Process(frames, n, fr); // pre-downmix, full 8ch
-            classifier.Process(frames, n);   // per-channel, independent
-            {
-                std::lock_guard<std::mutex> lk(meters.mu);
-                meters.frame = fr;
-                for (int c = 0; c < 8; ++c)
-                    meters.classes[c] = static_cast<uint8_t>(classifier.ClassOf(c));
-            }
-            ring.Write(frames, n);
-        }, g_quit);
-    });
+    // Starts capture + render threads. Safe to retry after an init failure:
+    // a failed Init leaves no threads behind.
+    auto startPipeline = [&](bool verbose) -> bool {
+        if (pipelineRunning) return true;
+        std::wstring err;
+        if (!cap.Init(cfg.captureDevice, err)) {
+            if (verbose) std::fprintf(stderr, "%s\n", sr::ToUtf8(err).c_str());
+            return false;
+        }
+        if (!ren.Init(cfg.outputDevice, err)) {
+            if (verbose)
+                std::fprintf(stderr, "render init failed: %s\n", sr::ToUtf8(err).c_str());
+            return false;
+        }
+        const sr::CaptureClient::Format& cf = cap.GetFormat();
+        const sr::RenderClient::Format& rf = ren.GetFormat();
+        std::printf("capture : %s (%u Hz, %u ch, buffer %.1f ms)\n",
+                    sr::ToUtf8(cap.DeviceName()).c_str(), cf.sampleRate, cf.channels,
+                    cf.bufferFrames * 1000.0 / cf.sampleRate);
+        std::printf("render  : %s (%s, %u Hz, %u ch, buffer %.1f ms)\n",
+                    sr::ToUtf8(ren.DeviceName()).c_str(), rf.exclusive ? "EXCLUSIVE" : "shared",
+                    rf.sampleRate, rf.channels, rf.bufferMs);
+        std::printf("running - tray icon for controls, Ctrl+C to stop\n\n");
 
-    std::thread renThread([&] {
-        std::vector<float> in8, stereo;
-        ren.Run([&](float* out, uint32_t frames) {
-            size_t need8 = static_cast<size_t>(frames) * 8;
-            if (in8.size() < need8) {
-                in8.resize(need8);
-                stereo.resize(static_cast<size_t>(frames) * 2);
-            }
-            size_t got = ring.Read(in8.data(), frames);
-            if (got < frames) // underrun: pad with silence
-                std::memset(in8.data() + got * 8, 0, (frames - got) * 8 * sizeof(float));
-            sr::DownmixConfig d = cfg.downmix;
-            d.mode = static_cast<sr::DownmixMode>(sr::g_downmixMode.load()); // tray hot-swap
-            sr::Downmix8To2(in8.data(), stereo.data(), frames, d);
-            std::memcpy(out, stereo.data(), frames * 2 * sizeof(float));
-        }, g_quit);
-    });
+        if (cfg.overlay.enabled) overlay.Start(cfg.overlay, &meters, g_quit);
+
+        capThread = std::thread([&] {
+            cap.Run([&](const float* frames, uint32_t n, LONGLONG) {
+                sr::AnalysisFrame fr;
+                analyzer.Process(frames, n, fr); // pre-downmix, full 8ch
+                classifier.Process(frames, n);   // per-channel, independent
+                {
+                    std::lock_guard<std::mutex> lk(meters.mu);
+                    meters.frame = fr;
+                    for (int c = 0; c < 8; ++c)
+                        meters.classes[c] = static_cast<uint8_t>(classifier.ClassOf(c));
+                }
+                ring.Write(frames, n);
+            }, g_quit);
+        });
+
+        renThread = std::thread([&] {
+            std::vector<float> in8, stereo;
+            ren.Run([&](float* out, uint32_t frames) {
+                size_t need8 = static_cast<size_t>(frames) * 8;
+                if (in8.size() < need8) {
+                    in8.resize(need8);
+                    stereo.resize(static_cast<size_t>(frames) * 2);
+                }
+                size_t got = ring.Read(in8.data(), frames);
+                if (got < frames) // underrun: pad with silence
+                    std::memset(in8.data() + got * 8, 0, (frames - got) * 8 * sizeof(float));
+                sr::DownmixConfig d = cfg.downmix;
+                d.mode = static_cast<sr::DownmixMode>(sr::g_downmixMode.load()); // tray hot-swap
+                sr::Downmix8To2(in8.data(), stereo.data(), frames, d);
+                std::memcpy(out, stereo.data(), frames * 2 * sizeof(float));
+            }, g_quit);
+        });
+
+        pipelineRunning = true;
+        return true;
+    };
 
     sr::Tray tray;
     sr::Tray::Handlers handlers;
@@ -210,7 +223,7 @@ int RunApp(sr::AppConfig& cfg, const std::wstring& configPath) {
     handlers.onOverlay = [&](bool on) {
         // Overlay off = render thread fully stopped, resources destroyed.
         // The audio path above is untouched either way.
-        if (on) overlay.Start(cfg.overlay, &meters, g_quit);
+        if (on && pipelineRunning) overlay.Start(cfg.overlay, &meters, g_quit);
         else overlay.Stop();
         cfg.overlay.enabled = on;
         sr::SaveConfig(configPath, cfg);
@@ -225,7 +238,20 @@ int RunApp(sr::AppConfig& cfg, const std::wstring& configPath) {
         sr::SaveConfig(configPath, cfg);
     };
     handlers.onExit = [&] { SetEvent(g_quit); };
+
+    int ticksUntilRetry = 0;
     handlers.onTick = [&] {
+        if (!pipelineRunning) {
+            // The device may appear later (boot order, driver install).
+            // Retry silently every 15 s.
+            if (++ticksUntilRetry >= 30) {
+                ticksUntilRetry = 0;
+                if (startPipeline(false))
+                    tray.Notify(L"SoundRadar",
+                                L"音频设备已连接,开始工作。 Audio device connected.");
+            }
+            return;
+        }
         if (!GetConsoleWindow()) return;
         sr::AnalysisFrame fr;
         {
@@ -235,13 +261,23 @@ int RunApp(sr::AppConfig& cfg, const std::wstring& configPath) {
         PrintMeterLine(fr);
     };
     tray.Init(cfg, handlers);
+
+    if (!startPipeline(true)) {
+        if (!trayMode) return 1; // console mode: fail fast with the message above
+        tray.Notify(L"SoundRadar 声纹雷达",
+                    L"未找到音频捕获设备,每 15 秒自动重试。\n"
+                    L"免费方案:安装 Voicemeeter Potato 并把游戏输出设为 Voicemeeter Input。\n"
+                    L"或安装本仓库的 SoundRadar VAD 驱动。\n"
+                    L"No capture device found. Retrying every 15 s.");
+    }
+
     tray.Run(g_quit); // blocks until quit
 
     std::printf("\nshutting down...\n");
     tray.Shutdown();
     overlay.Stop();
-    capThread.join();
-    renThread.join();
+    if (capThread.joinable()) capThread.join();
+    if (renThread.joinable()) renThread.join();
     if (ring.Overruns() > 0)
         std::printf("warning: ring dropped %llu frames (render could not keep up)\n",
                     (unsigned long long)ring.Overruns());
@@ -418,13 +454,14 @@ int wmain(int argc, wchar_t** argv) {
 
     if (selftest) return sr::RunSelfTest();
     if (classifyTest) return sr::RunClassifyTest();
-    if (list) {
-        ListDevices();
-        return 0;
-    }
 
     sr::AppConfig cfg;
     LoadConfig(configPath, cfg); // missing file = defaults
+
+    if (list) {
+        ListDevices(cfg.captureDevice);
+        return 0;
+    }
     if (!outputOverride.empty()) cfg.outputDevice = outputOverride;
     if (!modeOverride.empty()) {
         if (modeOverride == L"right-mono") cfg.downmix.mode = sr::DownmixRightMono;
@@ -434,7 +471,7 @@ int wmain(int argc, wchar_t** argv) {
             return 1;
         }
     }
-    if (measure) return sr::RunMeasure(cfg.outputDevice);
+    if (measure) return sr::RunMeasure(cfg.outputDevice, cfg.captureDevice);
     if (measureLoopback) return sr::RunMeasureLoopback();
     if (panTestSeconds >= 0) return sr::RunPanTest(panTestSeconds);
 
@@ -486,7 +523,7 @@ int wmain(int argc, wchar_t** argv) {
         }
         if (rc == 0) rc = RunSimulate(cfg, sc);
     } else {
-        rc = RunApp(cfg, configPath);
+        rc = RunApp(cfg, configPath, trayMode);
     }
 
     SetConsoleCtrlHandler(CtrlHandler, FALSE);

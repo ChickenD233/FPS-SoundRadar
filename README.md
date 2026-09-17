@@ -55,6 +55,21 @@ Driver signing decides which script you use. Read `docs/signing.md` first.
 
 Remove with `scripts/uninstall-driver.ps1`.
 
+### Free alternative: Voicemeeter Potato
+
+No driver install needed. Voicemeeter Potato (donationware) can carry the 7.1 signal instead of the SoundRadar VAD.
+
+1. Install Voicemeeter Potato. Set the game output device to "Voicemeeter Input". Configure that device as 7.1 in Windows.
+2. In Potato: route the input strip to the B1 bus with the 8-channel patch. On the A1 bus (your headphones), mix all channels into the right ear.
+3. Run `SoundRadar.exe`. It finds "Voicemeeter Out B1" by itself and shows the overlay.
+
+Notes:
+
+- Potato does the downmix in this setup. The engine downmix becomes optional. This path gives the lowest latency, because Potato mixes before the engine sees the signal.
+- The capture stream can have fewer than 8 channels. Channels map in FL FR C LFE BL BR SL SR order. Missing channels stay silent on the radar.
+- The config key `capture_device` in `%APPDATA%\SoundRadar\config.json` overrides the capture endpoint substring. Default `"SoundRadar"`: match the VAD loopback first, then Voicemeeter B1, then Voicemeeter Output.
+- The SoundRadar VAD driver path above stays the self-contained option: no extra software, and the engine does the downmix.
+
 ### Run
 
 `SoundRadar.exe --tray` starts in the tray. The tray menu switches the downmix mode, toggles the overlay and the experimental classification, and controls autostart. Settings live in `%APPDATA%\SoundRadar\config.json`.
@@ -119,6 +134,21 @@ cmake --build build --config Release
 - **开发机或虚拟机**：测试签名。管理员运行 `scripts/install-driver.ps1`，重启，然后在 Windows 和游戏里把默认输出设备选为 "SoundRadar Virtual 7.1 (Speaker)"。
 
 卸载用 `scripts/uninstall-driver.ps1`。
+
+### 免费替代方案：Voicemeeter Potato
+
+不装驱动也能用。Voicemeeter Potato（免费捐赠软件）可以代替 SoundRadar VAD 传输 7.1 信号。
+
+1. 安装 Voicemeeter Potato。游戏输出设备选 "Voicemeeter Input"，并在 Windows 里把它配置为 7.1。
+2. 在 Potato 里：输入条用 8 声道补丁路由到 B1 总线。在 A1 总线（你的耳机）上把所有声道混进右耳。
+3. 运行 `SoundRadar.exe`。它会自动找到 "Voicemeeter Out B1" 并显示 Overlay。
+
+说明：
+
+- 此方案由 Potato 完成下混，引擎下混变为可选。延迟最低，因为 Potato 在引擎之前完成混音。
+- 捕获流可以少于 8 声道。声道按 FL FR C LFE BL BR SL SR 顺序映射，缺失声道在雷达上保持静默。
+- 配置文件 `%APPDATA%\SoundRadar\config.json` 里的 `capture_device` 可覆盖捕获端点子串。默认 `"SoundRadar"`：先匹配 VAD 回路，再试 Voicemeeter B1，再试 Voicemeeter Output。
+- 上面的 SoundRadar VAD 驱动路径仍是自包含方案：不装第三方软件，由引擎完成下混。
 
 ### 运行
 

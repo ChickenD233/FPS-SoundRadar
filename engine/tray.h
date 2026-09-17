@@ -31,6 +31,9 @@ public:
     void Run(HANDLE quitEvent);
     void Shutdown();
 
+    // Tray balloon notification (non-modal). Call after Init.
+    void Notify(const std::wstring& title, const std::wstring& msg);
+
 private:
     static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp);
     LRESULT HandleMessage(UINT msg, WPARAM wp, LPARAM lp);
