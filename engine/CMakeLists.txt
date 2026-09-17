@@ -14,6 +14,8 @@ add_executable(SoundRadar
     pantest.cpp
     tray.cpp
     simulate.cpp
+    gui.cpp
+    log.cpp
     ../overlay/overlay.cpp
 )
 
@@ -39,6 +41,7 @@ target_link_libraries(SoundRadar PRIVATE
     ole32
     avrt
     winmm
+    comctl32
     d3d11
     dxgi
     d2d1
