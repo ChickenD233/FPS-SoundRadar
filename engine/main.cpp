@@ -22,6 +22,7 @@
 #include "downmix.h"
 #include "measure.h"
 #include "meters.h"
+#include "pantest.h"
 #include "render.h"
 #include "ring.h"
 #include "selftest.h"
@@ -58,6 +59,7 @@ void PrintUsage() {
         "  --simulate-screenshot <file.bmp>  render one dual frame to a BMP\n"
         "  --measure              latency report (needs SoundRadar driver + output)\n"
         "  --measure-loopback     click-train round-trip through the SoundRadar driver\n"
+        "  --pan-test [seconds]   play per-channel test tones on the SoundRadar speaker\n"
         "  --list-devices         list capture and render endpoints\n"
         "  --output <name>        render endpoint name substring\n"
         "  --mode <m>             right-mono | stereo (overrides config)\n"
@@ -373,6 +375,7 @@ int wmain(int argc, wchar_t** argv) {
     std::wstring overlayTestShot;
     bool selftest = false, measure = false, measureLoopback = false, list = false;
     bool trayMode = false, overlayTest = false, classifyTest = false;
+    int panTestSeconds = -1; // -1 = flag not given, 0 = once, >0 = loop budget
 
     for (int i = 1; i < argc; ++i) {
         std::wstring a = argv[i];
@@ -387,6 +390,11 @@ int wmain(int argc, wchar_t** argv) {
         else if (a == L"--classifytest") classifyTest = true;
         else if (a == L"--measure") measure = true;
         else if (a == L"--measure-loopback") measureLoopback = true;
+        else if (a == L"--pan-test") {
+            panTestSeconds = 0;
+            if (i + 1 < argc && argv[i + 1][0] != L'-')
+                panTestSeconds = _wtoi(argv[++i]);
+        }
         else if (a == L"--list-devices") list = true;
         else if (a == L"--tray") trayMode = true;
         else if (a == L"--overlaytest") {
@@ -428,6 +436,7 @@ int wmain(int argc, wchar_t** argv) {
     }
     if (measure) return sr::RunMeasure(cfg.outputDevice);
     if (measureLoopback) return sr::RunMeasureLoopback();
+    if (panTestSeconds >= 0) return sr::RunPanTest(panTestSeconds);
 
     if (trayMode) FreeConsole(); // started via Run key / Explorer: no console window
 
