@@ -301,11 +301,22 @@ int RunApp(sr::AppConfig& cfg, const std::wstring& configPath, bool trayMode,
     hooks.statusText = [&]() -> std::wstring {
         if (!pipeline.running)
             return L"等待设备 Waiting for device\r\n" + pipeline.lastError;
-        wchar_t buf[1024];
+        // Live levels so the user can see whether audio reaches the engine.
+        static const wchar_t* kNames[8] = { L"FL", L"FR", L"C", L"LFE",
+                                            L"BL", L"BR", L"SL", L"SR" };
+        wchar_t lv[256] = {};
+        int off = 0;
+        {
+            std::lock_guard<std::mutex> lk(meters.mu);
+            for (int c = 0; c < 8; ++c)
+                off += swprintf_s(lv + off, 256 - off, L"%s %.2f  ",
+                                  kNames[c], meters.frame.level[c]);
+        }
+        wchar_t buf[1400];
         double latency = pipeline.capBufMs + pipeline.periodMs + pipeline.renBufMs;
-        swprintf_s(buf, L"运行中 Running\r\n输入 In: %s\r\n输出 Out: %s (%s)\r\n估计延迟 Latency ~%.0f ms",
+        swprintf_s(buf, L"运行中 Running\r\n输入 In: %s\r\n输出 Out: %s (%s)\r\n估计延迟 Latency ~%.0f ms\r\n电平 Levels: %s",
                    pipeline.capName.c_str(), pipeline.renName.c_str(),
-                   pipeline.exclusive ? L"独占 exclusive" : L"共享 shared", latency);
+                   pipeline.exclusive ? L"独占 exclusive" : L"共享 shared", latency, lv);
         return buf;
     };
     hooks.onApply = [&](bool devChanged) {
@@ -753,6 +764,61 @@ int RunSimulateGui(sr::AppConfig cfg) {
 
 } // namespace
 
+// --diag: listen-only health check, 10 s, plays NOTHING (ear-safe).
+// Prints per-channel peak/RMS so we can see whether game audio reaches us.
+int RunDiag(sr::AppConfig& cfg) {
+    sr::ComInit com;
+    if (!com.Ok()) {
+        fwprintf(stderr, L"COM init failed\n");
+        return 1;
+    }
+    sr::CaptureClient cap;
+    std::wstring err;
+    if (!cap.Init(cfg.captureDevice, err)) {
+        std::fprintf(stderr, "%s\n", sr::ToUtf8(err).c_str());
+        return 1;
+    }
+    const sr::CaptureClient::Format& f = cap.GetFormat();
+    std::printf("capture: %s (%u Hz, %u ch, buffer %.1f ms)\n",
+                sr::ToUtf8(cap.DeviceName()).c_str(), f.sampleRate, f.channels,
+                f.bufferFrames * 1000.0 / f.sampleRate);
+    std::printf("listening 10 s (no audio output). Play a video or the game now...\n");
+
+    float maxLv[8] = {};
+    double sumSq[8] = {};
+    unsigned long long totalFrames = 0, packets = 0;
+    HANDLE quit = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+    std::thread t([&] {
+        cap.Run([&](const float* frames, uint32_t n, LONGLONG) {
+            ++packets;
+            totalFrames += n;
+            for (uint32_t i = 0; i < n; ++i)
+                for (int c = 0; c < 8; ++c) {
+                    float v = std::fabs(frames[static_cast<size_t>(i) * 8 + c]);
+                    if (v > maxLv[c]) maxLv[c] = v;
+                    sumSq[c] += static_cast<double>(v) * v;
+                }
+        }, quit);
+    });
+    Sleep(10000);
+    SetEvent(quit);
+    t.join();
+    CloseHandle(quit);
+
+    static const char* kNames[8] = { "FL", "FR", "C", "LFE", "BL", "BR", "SL", "SR" };
+    std::printf("\n%-5s %8s %8s\n", "ch", "max", "rms");
+    bool any = false;
+    for (int c = 0; c < 8; ++c) {
+        double rms = totalFrames ? std::sqrt(sumSq[c] / totalFrames) : 0.0;
+        std::printf("%-5s %8.3f %8.3f\n", kNames[c], maxLv[c], rms);
+        if (maxLv[c] > 0.02f) any = true;
+    }
+    std::printf("packets=%llu frames=%llu\n", packets, totalFrames);
+    std::printf(any ? "RESULT: audio reaches the engine; channels above are live\n"
+                    : "RESULT: silence. Check: Potato strip 'Voicemeeter Input' has B1 ON; game output = Voicemeeter Input; some audio playing\n");
+    return any ? 0 : 2;
+}
+
 int wmain(int argc, wchar_t** argv) {
     SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
     sr::LogInit();
@@ -765,7 +831,7 @@ int wmain(int argc, wchar_t** argv) {
     std::wstring overlayTestShot;
     bool selftest = false, measure = false, measureLoopback = false, list = false;
     bool trayMode = false, overlayTest = false, classifyTest = false;
-    bool guiTest = false, simGui = false;
+    bool guiTest = false, simGui = false, diag = false;
     int panTestSeconds = -1;
 
     std::wstring argLine;
@@ -796,6 +862,7 @@ int wmain(int argc, wchar_t** argv) {
                 panTestSeconds = _wtoi(argv[++i]);
         }
         else if (a == L"--list-devices") list = true;
+        else if (a == L"--diag") diag = true;
         else if (a == L"--tray") trayMode = true;
         else if (a == L"--overlaytest") {
             overlayTest = true;
@@ -838,6 +905,7 @@ int wmain(int argc, wchar_t** argv) {
     if (measure) return sr::RunMeasure(cfg.outputDevice, cfg.captureDevice);
     if (measureLoopback) return sr::RunMeasureLoopback();
     if (panTestSeconds >= 0) return sr::RunPanTest(panTestSeconds);
+    if (diag) return RunDiag(cfg);
 
     if (trayMode) FreeConsole(); // autostart: no console window
 

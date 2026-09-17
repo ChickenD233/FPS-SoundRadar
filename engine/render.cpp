@@ -130,9 +130,10 @@ bool RenderClient::Init(const std::wstring& nameSub, std::wstring& err) {
     const WAVEFORMATEX* chosen = nullptr;
     bool exclusive = false;
 
-    // 1) Exclusive, 5 ms buffer / 5 ms period.
+    // 1) Exclusive, 10 ms buffer / 10 ms period. (5 ms crackles on some USB
+    //    devices; 10 ms keeps end-to-end under the 30 ms budget.)
     for (const WAVEFORMATEX* c : candidates) {
-        if (TryInitialize(c, true, 50000, 50000)) {
+        if (TryInitialize(c, true, 100000, 100000)) {
             chosen = c;
             exclusive = true;
             break;
