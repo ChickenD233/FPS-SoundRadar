@@ -59,7 +59,7 @@ Remove with `scripts/uninstall-driver.ps1`.
 
 `SoundRadar.exe --tray` starts in the tray. The tray menu switches the downmix mode, toggles the overlay and the experimental classification, and controls autostart. Settings live in `%APPDATA%\SoundRadar\config.json`.
 
-Useful CLI flags: `--list-devices`, `--mode right-mono|stereo`, `--output <name>`, `--selftest`, `--measure`, `--measure-loopback`, `--simulate sweep|dual|pulse`, `--overlaytest`, `--classifytest`.
+Useful CLI flags: `--list-devices`, `--mode right-mono|stereo`, `--output <name>`, `--selftest`, `--measure`, `--measure-loopback`, `--pan-test [seconds]`, `--simulate sweep|dual|pulse`, `--overlaytest`, `--classifytest`.
 
 ### License
 
@@ -124,7 +124,7 @@ cmake --build build --config Release
 
 `SoundRadar.exe --tray` 托盘启动。托盘菜单可切换下混模式、开关 Overlay 和实验性分类、控制开机自启。配置文件在 `%APPDATA%\SoundRadar\config.json`。
 
-常用命令行：`--list-devices`、`--mode right-mono|stereo`、`--output <设备名>`、`--selftest`、`--measure`、`--measure-loopback`、`--simulate sweep|dual|pulse`、`--overlaytest`、`--classifytest`。
+常用命令行：`--list-devices`、`--mode right-mono|stereo`、`--output <设备名>`、`--selftest`、`--measure`、`--measure-loopback`、`--pan-test [秒数]`、`--simulate sweep|dual|pulse`、`--overlaytest`、`--classifytest`。
 
 ### 许可证
 

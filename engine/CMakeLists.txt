@@ -11,6 +11,7 @@ add_executable(SoundRadar
     selftest.cpp
     classify.cpp
     measure.cpp
+    pantest.cpp
     tray.cpp
     simulate.cpp
     ../overlay/overlay.cpp

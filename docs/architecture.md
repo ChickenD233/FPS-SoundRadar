@@ -6,9 +6,9 @@
 
 ## English
 
-FPS-SoundRadar shows the direction of game sounds on screen. It is built for a player who is deaf in the left ear. Two binaries do the work:
+FPS-SoundRadar shows the direction of game sounds on screen. It serves a player who is deaf in the left ear. Two binaries do the work:
 
-1. **SoundRadar VAD** (kernel driver, `driver/`). A virtual 7.1 sound card derived from the Microsoft sysvad sample (MS-PL license). The game renders 8-channel PCM to it. The driver copies every render byte into a kernel ring buffer, and its loopback capture endpoint plays the ring out to user mode. No virtual-cable products are used.
+1. **SoundRadar VAD** (kernel driver, `driver/`). A virtual 7.1 sound card derived from the Microsoft sysvad sample (MS-PL license). The game renders 8-channel PCM to it. The driver copies every render byte into a kernel ring buffer. Its loopback capture endpoint plays the ring out to user mode. No virtual-cable products are used.
 2. **SoundRadar.exe** (user mode, `engine/` + `overlay/`, Apache-2.0). One process, three jobs:
    - capture the 7.1 stream from the loopback endpoint (WASAPI),
    - downmix to the real headphones — RIGHT_MONO mode sums all 8 channels into the right ear with adjustable weights, STEREO mode does a standard 7.1-to-2.0 downmix,
