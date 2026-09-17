@@ -475,6 +475,7 @@ int wmain(int argc, wchar_t** argv) {
     if (measureLoopback) return sr::RunMeasureLoopback();
     if (panTestSeconds >= 0) return sr::RunPanTest(panTestSeconds);
 
+    if (argc == 1) trayMode = true; // double-click from Explorer: tray app, no console
     if (trayMode) FreeConsole(); // started via Run key / Explorer: no console window
 
     // first run: write a default config so users have something to edit

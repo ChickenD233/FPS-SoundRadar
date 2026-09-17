@@ -31,6 +31,8 @@ target_compile_definitions(SoundRadar PRIVATE
 if(MSVC)
     # /utf-8: bilingual (Chinese) string literals in tray menu
     target_compile_options(SoundRadar PRIVATE /W4 /O2 /permissive- /utf-8)
+    # static CRT: the exe runs on machines without the VC++ redistributable
+    set_property(TARGET SoundRadar PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 endif()
 
 target_link_libraries(SoundRadar PRIVATE
