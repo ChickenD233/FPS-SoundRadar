@@ -1,0 +1,439 @@
+// main.cpp - SoundRadar engine: capture -> analyze -> downmix -> render,
+// plus overlay window, tray menu, and headless verification modes.
+//
+// Thread model:
+//   capture thread : WASAPI packet -> analysis (8ch, independent) -> ring
+//   render thread  : ring -> Downmix8To2 (mode from atomic, tray hot-swap) -> submit
+//   overlay thread : SharedMeters snapshot -> DComp/D2D radar + edge bands
+//   main thread    : tray icon + message loop, config, shutdown
+#include <windows.h>
+
+#include <atomic>
+#include <cstdio>
+#include <string>
+#include <thread>
+#include <vector>
+
+#include "../overlay/overlay.h"
+#include "analysis.h"
+#include "capture.h"
+#include "config.h"
+#include "downmix.h"
+#include "measure.h"
+#include "meters.h"
+#include "render.h"
+#include "ring.h"
+#include "selftest.h"
+#include "simulate.h"
+#include "tray.h"
+
+namespace {
+
+HANDLE g_quit = nullptr;
+
+BOOL WINAPI CtrlHandler(DWORD type) {
+    switch (type) {
+        case CTRL_C_EVENT:
+        case CTRL_BREAK_EVENT:
+        case CTRL_CLOSE_EVENT:
+            if (g_quit) SetEvent(g_quit);
+            return TRUE;
+        default:
+            return FALSE;
+    }
+}
+
+void PrintUsage() {
+    std::printf(
+        "SoundRadar - 7.1 loopback capture, metering, right-mono/stereo downmix, overlay\n"
+        "\n"
+        "usage: SoundRadar.exe [options]\n"
+        "  (no args)              run engine + overlay + tray in the console\n"
+        "  --tray                 run hidden (no console), tray icon only\n"
+        "  --selftest             DSP self-tests (no audio devices needed), exit 0/1\n"
+        "  --overlaytest [bmp]    overlay checks: ex-style, CPU active/idle, screenshot\n"
+        "  --simulate <scenario>  sweep | dual | pulse; feeds synthetic meters ~12 s\n"
+        "  --simulate-screenshot <file.bmp>  render one dual frame to a BMP\n"
+        "  --measure              latency report (needs SoundRadar driver + output)\n"
+        "  --measure-loopback     click-train round-trip through the SoundRadar driver\n"
+        "  --list-devices         list capture and render endpoints\n"
+        "  --output <name>        render endpoint name substring\n"
+        "  --mode <m>             right-mono | stereo (overrides config)\n"
+        "  --config <path>        config file (default %%APPDATA%%\\SoundRadar\\config.json)\n"
+        "  --help                 this text\n");
+}
+
+void ListDevices() {
+    sr::ComInit com;
+    if (!com.Ok()) {
+        fwprintf(stderr, L"COM init failed\n");
+        return;
+    }
+    std::printf("capture endpoints:\n");
+    for (const auto& d : sr::EnumerateEndpoints(eCapture))
+        std::printf("  %s%s\n", sr::ToUtf8(d.name).c_str(), d.isDefault ? "  [default]" : "");
+    std::printf("render endpoints:\n");
+    for (const auto& d : sr::EnumerateEndpoints(eRender))
+        std::printf("  %s%s\n", sr::ToUtf8(d.name).c_str(), d.isDefault ? "  [default]" : "");
+}
+
+void PrintMeterLine(const sr::AnalysisFrame& fr) {
+    static const char* names[sr::kChannels] = { "FL", "FR", "C ", "LFE", "BL", "BR", "SL", "SR" };
+    std::printf("\r");
+    for (int c = 0; c < sr::kChannels; ++c)
+        std::printf("%s %.2f%s  ", names[c], fr.level[c], fr.peak[c] ? "*" : " ");
+    std::printf("%s   ", fr.active ? "ACTIVE" : "idle  ");
+    std::fflush(stdout);
+}
+
+// Prints the overlay window ex-style and checks every required flag.
+bool CheckExStyle(HWND hwnd) {
+    LONG ex = GetWindowLongW(hwnd, GWL_EXSTYLE);
+    struct Flag { DWORD bits; const char* name; };
+    const Flag req[] = {
+        { WS_EX_TRANSPARENT, "WS_EX_TRANSPARENT" },
+        { WS_EX_LAYERED, "WS_EX_LAYERED" },
+        { WS_EX_TOPMOST, "WS_EX_TOPMOST" },
+        { WS_EX_NOACTIVATE, "WS_EX_NOACTIVATE" },
+        { WS_EX_TOOLWINDOW, "WS_EX_TOOLWINDOW" },
+    };
+    std::printf("overlay window ex-style: 0x%08lx\n", static_cast<unsigned long>(ex));
+    bool ok = true;
+    for (const Flag& f : req) {
+        bool set = (ex & f.bits) != 0;
+        std::printf("  %-18s : %s\n", f.name, set ? "set" : "MISSING");
+        if (!set) ok = false;
+    }
+    return ok;
+}
+
+HWND WaitForOverlayWindow(const sr::Overlay& overlay, int timeoutMs) {
+    for (int waited = 0; waited < timeoutMs; waited += 50) {
+        HWND hwnd = overlay.Hwnd();
+        if (hwnd) return hwnd;
+        if (WaitForSingleObject(g_quit, 0) == WAIT_OBJECT_0) return nullptr;
+        Sleep(50);
+    }
+    return nullptr;
+}
+
+// Full app: audio pipeline + overlay + tray. Used by both console and --tray.
+int RunApp(sr::AppConfig& cfg, const std::wstring& configPath) {
+    sr::ComInit com;
+    if (!com.Ok()) {
+        fwprintf(stderr, L"COM init failed\n");
+        return 1;
+    }
+
+    sr::CaptureClient cap;
+    std::wstring err;
+    if (!cap.Init(err)) {
+        if (GetConsoleWindow())
+            std::fprintf(stderr, "%s\n", sr::ToUtf8(err).c_str());
+        else
+            MessageBoxW(nullptr, err.c_str(), L"SoundRadar", MB_ICONERROR | MB_OK);
+        return 1;
+    }
+    sr::RenderClient ren;
+    if (!ren.Init(cfg.outputDevice, err)) {
+        if (GetConsoleWindow())
+            std::fprintf(stderr, "render init failed: %s\n", sr::ToUtf8(err).c_str());
+        else
+            MessageBoxW(nullptr, err.c_str(), L"SoundRadar", MB_ICONERROR | MB_OK);
+        return 1;
+    }
+
+    const sr::CaptureClient::Format& cf = cap.GetFormat();
+    const sr::RenderClient::Format& rf = ren.GetFormat();
+    std::printf("capture : %s (%u Hz, %u ch, buffer %.1f ms)\n", sr::ToUtf8(cap.DeviceName()).c_str(),
+                cf.sampleRate, cf.channels, cf.bufferFrames * 1000.0 / cf.sampleRate);
+    std::printf("render  : %s (%s, %u Hz, %u ch, buffer %.1f ms)\n",
+                sr::ToUtf8(ren.DeviceName()).c_str(), rf.exclusive ? "EXCLUSIVE" : "shared",
+                rf.sampleRate, rf.channels, rf.bufferMs);
+    std::printf("running - tray icon for controls, Ctrl+C to stop\n\n");
+
+    sr::g_downmixMode.store(static_cast<int>(cfg.downmix.mode));
+
+    sr::RingBuffer ring(8192);
+    sr::Analyzer analyzer(cfg.analysis);
+    sr::SharedMeters meters;
+
+    sr::Overlay overlay;
+    if (cfg.overlay.enabled) overlay.Start(cfg.overlay, &meters, g_quit);
+
+    std::thread capThread([&] {
+        cap.Run([&](const float* frames, uint32_t n, LONGLONG) {
+            sr::AnalysisFrame fr;
+            analyzer.Process(frames, n, fr); // pre-downmix, full 8ch
+            {
+                std::lock_guard<std::mutex> lk(meters.mu);
+                meters.frame = fr;
+            }
+            ring.Write(frames, n);
+        }, g_quit);
+    });
+
+    std::thread renThread([&] {
+        std::vector<float> in8, stereo;
+        ren.Run([&](float* out, uint32_t frames) {
+            size_t need8 = static_cast<size_t>(frames) * 8;
+            if (in8.size() < need8) {
+                in8.resize(need8);
+                stereo.resize(static_cast<size_t>(frames) * 2);
+            }
+            size_t got = ring.Read(in8.data(), frames);
+            if (got < frames) // underrun: pad with silence
+                std::memset(in8.data() + got * 8, 0, (frames - got) * 8 * sizeof(float));
+            sr::DownmixConfig d = cfg.downmix;
+            d.mode = static_cast<sr::DownmixMode>(sr::g_downmixMode.load()); // tray hot-swap
+            sr::Downmix8To2(in8.data(), stereo.data(), frames, d);
+            std::memcpy(out, stereo.data(), frames * 2 * sizeof(float));
+        }, g_quit);
+    });
+
+    sr::Tray tray;
+    sr::Tray::Handlers handlers;
+    handlers.onMode = [&](int m) {
+        sr::g_downmixMode.store(m);
+        cfg.downmix.mode = static_cast<sr::DownmixMode>(m);
+        sr::SaveConfig(configPath, cfg);
+    };
+    handlers.onOverlay = [&](bool on) {
+        // Overlay off = render thread fully stopped, resources destroyed.
+        // The audio path above is untouched either way.
+        if (on) overlay.Start(cfg.overlay, &meters, g_quit);
+        else overlay.Stop();
+        cfg.overlay.enabled = on;
+        sr::SaveConfig(configPath, cfg);
+    };
+    handlers.onAutostart = [&](bool on) {
+        cfg.autostart = on;
+        sr::SaveConfig(configPath, cfg);
+    };
+    handlers.onExit = [&] { SetEvent(g_quit); };
+    handlers.onTick = [&] {
+        if (!GetConsoleWindow()) return;
+        sr::AnalysisFrame fr;
+        {
+            std::lock_guard<std::mutex> lk(meters.mu);
+            fr = meters.frame;
+        }
+        PrintMeterLine(fr);
+    };
+    tray.Init(cfg, handlers);
+    tray.Run(g_quit); // blocks until quit
+
+    std::printf("\nshutting down...\n");
+    tray.Shutdown();
+    overlay.Stop();
+    capThread.join();
+    renThread.join();
+    if (ring.Overruns() > 0)
+        std::printf("warning: ring dropped %llu frames (render could not keep up)\n",
+                    (unsigned long long)ring.Overruns());
+    return 0;
+}
+
+// Headless overlay verification: window flags + render thread liveness, ~12 s.
+int RunSimulate(sr::AppConfig cfg, sr::SimScenario scenario) {
+    cfg.overlay.enabled = true; // simulation exists to exercise the overlay
+    sr::SharedMeters meters;
+    sr::Overlay overlay;
+    overlay.Start(cfg.overlay, &meters, g_quit);
+
+    HWND hwnd = WaitForOverlayWindow(overlay, 3000);
+    bool styleOk = false;
+    if (!hwnd) {
+        std::printf("[FAIL] overlay window was not created\n");
+    } else {
+        styleOk = CheckExStyle(hwnd);
+    }
+
+    sr::Simulator sim(scenario, &meters, g_quit);
+    sim.Start();
+
+    Sleep(1200); // let a sweep channel reach full level
+    uint64_t f0 = overlay.FramesDrawn();
+    Sleep(1200);
+    uint64_t f1 = overlay.FramesDrawn();
+    bool alive = overlay.IsRunning() && f1 > f0;
+    std::printf("render thread alive: %s (%llu frames drawn in 1.2 s window)\n",
+                alive ? "yes" : "NO", (unsigned long long)(f1 - f0));
+
+    // run the scenario for ~12 s total
+    for (int i = 0; i < 90 && WaitForSingleObject(g_quit, 100) == WAIT_TIMEOUT; ++i) {
+    }
+
+    sim.Stop();
+    overlay.Stop();
+    bool ok = styleOk && alive;
+    std::printf("simulate: %s\n", ok ? "PASS" : "FAIL");
+    return ok ? 0 : 1;
+}
+
+// One-command overlay CI check: ex-style, CPU active/idle, screenshot.
+int RunOverlayTest(sr::AppConfig cfg, const std::wstring& shotPath) {
+    cfg.overlay.enabled = true;
+    sr::SharedMeters meters;
+    sr::Overlay overlay;
+    overlay.Start(cfg.overlay, &meters, g_quit);
+
+    HWND hwnd = WaitForOverlayWindow(overlay, 3000);
+    bool styleOk = hwnd && CheckExStyle(hwnd);
+
+    sr::Simulator sim(sr::SimDual, &meters, g_quit);
+    sim.Start();
+
+    Sleep(1500); // dual levels at steady state, overlay at 60 fps
+    overlay.ResetStats();
+    Sleep(4000);
+    sr::Overlay::Stats active = overlay.GetStats();
+
+    sim.SetSilent(true);
+    Sleep(2000); // levels fade out, overlay drops to idle polling
+    overlay.ResetStats();
+    Sleep(3000);
+    sr::Overlay::Stats idle = overlay.GetStats();
+
+    std::printf("overlay render thread CPU: active %.2f%% (%llu frames in window), "
+                "idle %.2f%%\n",
+                active.activeCpuPct, (unsigned long long)active.frames, idle.idleCpuPct);
+
+    float dualLevels[8] = {};
+    dualLevels[0] = 0.8f; // FL
+    dualLevels[5] = 0.8f; // BR
+    int w = GetSystemMetrics(SM_CXSCREEN), h = GetSystemMetrics(SM_CYSCREEN);
+    bool shot = sr::RenderSceneToFile(shotPath, w, h, dualLevels, cfg.overlay);
+    std::printf("screenshot: %s (%s)\n", sr::ToUtf8(shotPath).c_str(),
+                shot ? "written" : "FAILED");
+
+    sim.Stop();
+    overlay.Stop();
+
+    bool cpuOk = active.activeCpuPct < 5.0 && idle.idleCpuPct < 2.0;
+    bool framesOk = active.frames > 100; // ~60 fps over the 4 s window
+    bool ok = styleOk && cpuOk && framesOk && shot;
+    std::printf("overlaytest: style=%s cpu=%s frames=%s screenshot=%s -> %s\n",
+                styleOk ? "ok" : "FAIL", cpuOk ? "ok" : "FAIL", framesOk ? "ok" : "FAIL",
+                shot ? "ok" : "FAIL", ok ? "PASS" : "FAIL");
+    return ok ? 0 : 1;
+}
+
+} // namespace
+
+int wmain(int argc, wchar_t** argv) {
+    std::wstring configPath = sr::DefaultConfigPath();
+    std::wstring outputOverride;
+    std::wstring modeOverride;
+    std::wstring screenshotPath;
+    std::wstring simScenario;
+    std::wstring overlayTestShot;
+    bool selftest = false, measure = false, measureLoopback = false, list = false;
+    bool trayMode = false, overlayTest = false;
+
+    for (int i = 1; i < argc; ++i) {
+        std::wstring a = argv[i];
+        auto needValue = [&](const wchar_t* flag) -> std::wstring {
+            if (i + 1 >= argc) {
+                fwprintf(stderr, L"%ls requires a value\n", flag);
+                std::exit(1);
+            }
+            return argv[++i];
+        };
+        if (a == L"--selftest") selftest = true;
+        else if (a == L"--measure") measure = true;
+        else if (a == L"--measure-loopback") measureLoopback = true;
+        else if (a == L"--list-devices") list = true;
+        else if (a == L"--tray") trayMode = true;
+        else if (a == L"--overlaytest") {
+            overlayTest = true;
+            if (i + 1 < argc && argv[i + 1][0] != L'-') overlayTestShot = argv[++i];
+        }
+        else if (a == L"--simulate") simScenario = needValue(L"--simulate");
+        else if (a == L"--simulate-screenshot") screenshotPath = needValue(L"--simulate-screenshot");
+        else if (a == L"--output") outputOverride = needValue(L"--output");
+        else if (a == L"--mode") modeOverride = needValue(L"--mode");
+        else if (a == L"--config") configPath = needValue(L"--config");
+        else if (a == L"--help" || a == L"-h" || a == L"/?") {
+            PrintUsage();
+            return 0;
+        } else {
+            std::fprintf(stderr, "unknown option: %s\n", sr::ToUtf8(a).c_str());
+            PrintUsage();
+            return 1;
+        }
+    }
+
+    if (selftest) return sr::RunSelfTest();
+    if (list) {
+        ListDevices();
+        return 0;
+    }
+
+    sr::AppConfig cfg;
+    LoadConfig(configPath, cfg); // missing file = defaults
+    if (!outputOverride.empty()) cfg.outputDevice = outputOverride;
+    if (!modeOverride.empty()) {
+        if (modeOverride == L"right-mono") cfg.downmix.mode = sr::DownmixRightMono;
+        else if (modeOverride == L"stereo") cfg.downmix.mode = sr::DownmixStereo;
+        else {
+            fwprintf(stderr, L"--mode must be right-mono or stereo\n");
+            return 1;
+        }
+    }
+    if (measure) return sr::RunMeasure(cfg.outputDevice);
+    if (measureLoopback) return sr::RunMeasureLoopback();
+
+    if (trayMode) FreeConsole(); // started via Run key / Explorer: no console window
+
+    // first run: write a default config so users have something to edit
+    {
+        wchar_t full[MAX_PATH] = {};
+        DWORD n = GetFullPathNameW(configPath.c_str(), MAX_PATH, full, nullptr);
+        std::wstring p = (n > 0 && n < MAX_PATH) ? full : configPath;
+        if (GetFileAttributesW(p.c_str()) == INVALID_FILE_ATTRIBUTES) {
+            if (sr::SaveConfig(p, cfg))
+                if (GetConsoleWindow())
+                    std::printf("wrote default config: %s\n", sr::ToUtf8(p).c_str());
+        }
+    }
+
+    g_quit = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+    if (!g_quit) {
+        fwprintf(stderr, L"CreateEvent failed\n");
+        return 1;
+    }
+    SetConsoleCtrlHandler(CtrlHandler, TRUE);
+
+    int rc = 0;
+    if (!screenshotPath.empty()) {
+        // one dual-scenario frame at primary-monitor size
+        float dualLevels[8] = {};
+        dualLevels[0] = 0.8f;
+        dualLevels[5] = 0.8f;
+        int w = GetSystemMetrics(SM_CXSCREEN), h = GetSystemMetrics(SM_CYSCREEN);
+        bool ok = sr::RenderSceneToFile(screenshotPath, w, h, dualLevels, cfg.overlay);
+        std::printf("screenshot %s: %s\n", ok ? "written" : "FAILED",
+                    sr::ToUtf8(screenshotPath).c_str());
+        rc = ok ? 0 : 1;
+    } else if (overlayTest) {
+        rc = RunOverlayTest(cfg, overlayTestShot.empty() ? L"overlay-dual.bmp" : overlayTestShot);
+    } else if (!simScenario.empty()) {
+        sr::SimScenario sc = sr::SimSweep;
+        if (simScenario == L"sweep") sc = sr::SimSweep;
+        else if (simScenario == L"dual") sc = sr::SimDual;
+        else if (simScenario == L"pulse") sc = sr::SimPulse;
+        else {
+            fwprintf(stderr, L"--simulate must be sweep, dual or pulse\n");
+            rc = 1;
+        }
+        if (rc == 0) rc = RunSimulate(cfg, sc);
+    } else {
+        rc = RunApp(cfg, configPath);
+    }
+
+    SetConsoleCtrlHandler(CtrlHandler, FALSE);
+    CloseHandle(g_quit);
+    g_quit = nullptr;
+    return rc;
+}

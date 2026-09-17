@@ -1,0 +1,16 @@
+FPS-SoundRadar
+Copyright 2026 ChickenD233
+
+This product includes software derived from the Microsoft Windows-driver-samples
+sysvad virtual audio driver sample (driver/sysvad/), which is licensed under the
+Microsoft Public License (MS-PL). A copy of the MS-PL license is in
+driver/SYSVAD-LICENSE.txt. Source files derived from sysvad remain under MS-PL.
+
+All other code in this repository is licensed under the Apache License, Version 2.0.
+See LICENSE.
+
+---
+
+本仓库的 driver/sysvad/ 目录基于微软 Windows-driver-samples 的 sysvad 虚拟音频
+驱动示例修改，该部分代码遵循 MS-PL 协议（见 driver/SYSVAD-LICENSE.txt）。
+其余代码遵循 Apache License 2.0（见 LICENSE)。两种协议均允许商业使用。

@@ -1,0 +1,12 @@
+build/
+*.user
+*.suo
+.vs/
+tools/gh/gh_*/
+tools/gh/gh.zip
+driver/sysvad/**/x64/
+driver/sysvad/**/Release/
+driver/sysvad/**/Debug/
+*.cat
+*.zip
+tools/wdk-nuget/
