@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Hand-built glue that maps the WindowsKernelModeDriver10.0 toolset onto the
+     installed WDK 10.0.26100.0 kit files, standing in for the WDK VSIX on this
+     BuildTools-only machine. -->
+<Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+
+  <Import Project="$(VCTargetsPath)\Platforms\$(Platform)\PlatformToolsets\v143\Toolset.props" />
+
+  <PropertyGroup>
+    <IsKernelModeToolset>true</IsKernelModeToolset>
+    <WindowsTargetPlatformVersion Condition="'$(WindowsTargetPlatformVersion)' == '' Or '$(WindowsTargetPlatformVersion)' == '10.0'">10.0.26100.0</WindowsTargetPlatformVersion>
+    <TargetPlatformVersion Condition="'$(TargetPlatformVersion)' == ''">$(WindowsTargetPlatformVersion)</TargetPlatformVersion>
+    <WDKContentRoot Condition="'$(WDKContentRoot)' == ''">$([MSBuild]::GetRegistryValueFromView('HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows Kits\Installed Roots', 'KitsRoot10', null, RegistryView.Registry64, RegistryView.Registry32))</WDKContentRoot>
+    <WDKBuildFolder Condition="'$(WDKBuildFolder)' == ''">$(WindowsTargetPlatformVersion)</WDKBuildFolder>
+  </PropertyGroup>
+
+  <!-- Version constants (TargetPlatformVersion_NI etc.) must exist before the
+       platform ImportAfter chain evaluates WindowsDriver.OS.props. -->
+  <Import Condition="Exists('$(WDKContentRoot)build\$(WDKBuildFolder)\WindowsDriver.Default.props')"
+          Project="$(WDKContentRoot)build\$(WDKBuildFolder)\WindowsDriver.Default.props" />
+
+  <!-- Path variables that the WDK VSIX toolset normally defines.
+       The kit build files reference these but never define them. -->
+  <PropertyGroup>
+    <DDKPlatform Condition="'$(DDKPlatform)' == '' and '$(Platform)' == 'x64'">x64</DDKPlatform>
+    <KIT_SHARED_IncludePath>$(WDKContentRoot)Include\$(TargetPlatformVersion)\shared</KIT_SHARED_IncludePath>
+    <KIT_SHARED_INC_PATH_WDK>$(WDKContentRoot)Include\$(TargetPlatformVersion)\shared</KIT_SHARED_INC_PATH_WDK>
+    <KM_IncludePath>$(WDKContentRoot)Include\$(TargetPlatformVersion)\km;$(WDKContentRoot)Include\$(TargetPlatformVersion)\km\crt</KM_IncludePath>
+    <CRT_IncludePath>$(WDKContentRoot)Include\$(TargetPlatformVersion)\km\crt</CRT_IncludePath>
+    <UM_IncludePath>$(WDKContentRoot)Include\$(TargetPlatformVersion)\um;$(WDKContentRoot)Include\$(TargetPlatformVersion)\ucrt;$(WDKContentRoot)Include\$(TargetPlatformVersion)\winrt;$(WDKContentRoot)Include\$(TargetPlatformVersion)\cppwinrt</UM_IncludePath>
+    <DDK_INC_PATH>$(WDKContentRoot)Include\$(TargetPlatformVersion)\km</DDK_INC_PATH>
+    <DDK_LIB_PATH>$(WDKContentRoot)Lib\$(TargetPlatformVersion)\km\$(DDKPlatform)\</DDK_LIB_PATH>
+    <SDK_LIB_PATH>$(WDKContentRoot)Lib\$(TargetPlatformVersion)\um\$(DDKPlatform)\</SDK_LIB_PATH>
+    <KMDF_VERSION_MINOR Condition="'$(KMDF_VERSION_MINOR)' == ''">15</KMDF_VERSION_MINOR>
+    <!-- LateEvaluation.props appends the relative "$(KMDF_VERSION_MAJOR).$(KMDF_VERSION_MINOR)" to these. -->
+    <KMDF_LIB_PATH>$(WDKContentRoot)Lib\wdf\kmdf\$(DDKPlatform)\</KMDF_LIB_PATH>
+    <KMDF_INC_PATH>$(WDKContentRoot)Include\wdf\kmdf\</KMDF_INC_PATH>
+    <KMDF_COINSTALLER_VERSION Condition="'$(KMDF_COINSTALLER_VERSION)' == ''">$(KMDF_VERSION_MAJOR).$(KMDF_VERSION_MINOR)</KMDF_COINSTALLER_VERSION>
+  </PropertyGroup>
+
+</Project>

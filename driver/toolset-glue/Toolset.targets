@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Hand-built glue: driver targets chain onto the v143 tool targets.
+     WDK driver-specific targets come in through the platform ImportAfter hooks. -->
+<Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+
+  <Import Project="$(VCTargetsPath)\Platforms\$(Platform)\PlatformToolsets\v143\Toolset.targets" />
+
+</Project>
