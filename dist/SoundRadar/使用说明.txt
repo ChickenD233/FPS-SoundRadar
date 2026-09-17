@@ -1,27 +1,24 @@
-SoundRadar 声纹雷达 - 使用说明
+SoundRadar 声纹雷达 - 3 步上手
 ================================
 
-【启动】
-双击 SoundRadar.exe 即可。没有黑窗口,程序驻留在右下角系统托盘(绿色雷达图标)。
-右键点击托盘图标打开菜单:切换下混模式、开关声纹显示、开关声音分类、开机自启、退出。
+第 1 步:装 Voicemeeter Potato(一次性)
+  1. 打开 https://vb-audio.com/Voicemeeter/potato.htm 下载安装,重启电脑。
+  2. 打开 Potato,点右上角 Menu,勾上 Run on Windows startup。
 
-【前提】
-需要先装好 Voicemeeter Potato(vb-audio.com,免费),并按
-仓库文档 docs/voicemeeter-setup.md 配置:
-1. Windows 声音设置把 "Voicemeeter Input" 设为默认播放设备,并配置为 7.1。
-2. Potato 里 "Voicemeeter Input" 那条只开 B1。
-如果没装好,程序会在托盘气泡提示,并每 15 秒自动重试,装好后自动开始工作。
+第 2 步:让游戏声音走 7.1(一次性)
+  1. 右键任务栏小喇叭 -> 声音设置 -> 更多声音设置。
+  2. "播放"里找到 Voicemeeter Input,右键设为默认设备。
+  3. 再右键它 -> 配置扬声器 -> 选 7.1 环绕 -> 完成。
+  4. Potato 窗口中间的 Voicemeeter Input 竖条:点亮 B1(绿色),点灭 A1(灰色)。
 
-【托盘菜单说明】
-- 模式:右耳单声道(默认,所有声道混进右耳)/ 立体声
-- 声纹显示 Overlay:方向雷达总开关(关掉对音频零影响)
-- 声音分类(实验性):脚步/枪声启发式标记
-- 开机自启:写入注册表 Run 键,登录后自动进托盘
+第 3 步:开 SoundRadar
+  1. 双击 SoundRadar.exe,主窗口弹出。
+  2. 输出设备选你的真实耳机(带"(虚拟)"的不要选)。
+  3. 模式保持"右耳单声道",点"应用"。状态栏显示运行中 = 完成。
 
-【配置文件】
-%APPDATA%\SoundRadar\config.json
-可改:捕获设备(capture_device)、8 声道权重(weights)、颜色阈值、雷达位置等。
+进游戏,空心圆环上的箭头会指向声源方向,所有声音都进右耳。
 
-【问题排查】
-看不到雷达:确认 Potato 正在运行且 VAIO 条的 B1 按钮是亮的(绿色)。
-声音异常:退出程序(托盘右键 -> 退出),音频立即恢复正常。
+提示:
+- 点窗口的 X = 最小化到托盘,不退出。彻底退出:托盘绿图标右键 -> 退出。
+- 雷达位置/大小/特效/灵敏度都在主窗口里拖滑块,点应用即时生效。
+- 出问题看日志:Win+R 输入 %APPDATA%\SoundRadar 回车,打开 log.txt。
