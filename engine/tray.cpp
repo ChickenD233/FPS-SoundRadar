@@ -14,6 +14,7 @@ namespace {
 constexpr UINT ID_MODE_RIGHTMONO = 1001;
 constexpr UINT ID_MODE_STEREO = 1002;
 constexpr UINT ID_OVERLAY = 1010;
+constexpr UINT ID_CLASSIFY = 1012;
 constexpr UINT ID_AUTOSTART = 1011;
 constexpr UINT ID_EXIT = 1099;
 
@@ -121,6 +122,7 @@ bool Tray::Init(const AppConfig& cfg, Handlers handlers) {
     handlers_ = std::move(handlers);
     mode_ = static_cast<int>(cfg.downmix.mode);
     overlayOn_ = cfg.overlay.enabled;
+    classifyOn_ = cfg.classifyEnabled;
     autostartOn_ = AutostartIsEnabled();
 
     WNDCLASSEXW wc = {};
@@ -196,6 +198,7 @@ void Tray::RefreshChecks() {
     CheckMenuRadioItem(modeMenu_, ID_MODE_RIGHTMONO, ID_MODE_STEREO,
                        mode_ == 0 ? ID_MODE_RIGHTMONO : ID_MODE_STEREO, MF_BYCOMMAND);
     CheckMenuItem(menu_, ID_OVERLAY, MF_BYCOMMAND | (overlayOn_ ? MF_CHECKED : MF_UNCHECKED));
+    CheckMenuItem(menu_, ID_CLASSIFY, MF_BYCOMMAND | (classifyOn_ ? MF_CHECKED : MF_UNCHECKED));
     CheckMenuItem(menu_, ID_AUTOSTART,
                   MF_BYCOMMAND | (autostartOn_ ? MF_CHECKED : MF_UNCHECKED));
 }
@@ -208,6 +211,7 @@ void Tray::ShowMenu() {
         AppendMenuW(modeMenu_, MF_STRING, ID_MODE_STEREO, L"立体声 Stereo");
         AppendMenuW(menu_, MF_POPUP, reinterpret_cast<UINT_PTR>(modeMenu_), L"模式 Mode");
         AppendMenuW(menu_, MF_STRING, ID_OVERLAY, L"声纹显示 Overlay");
+        AppendMenuW(menu_, MF_STRING, ID_CLASSIFY, L"声音分类 Sound classification (实验性)");
         AppendMenuW(menu_, MF_STRING, ID_AUTOSTART, L"开机自启 Autostart");
         AppendMenuW(menu_, MF_SEPARATOR, 0, nullptr);
         AppendMenuW(menu_, MF_STRING, ID_EXIT, L"退出 Exit");
@@ -238,6 +242,10 @@ LRESULT Tray::HandleMessage(UINT msg, WPARAM wp, LPARAM lp) {
                 case ID_OVERLAY:
                     overlayOn_ = !overlayOn_;
                     if (handlers_.onOverlay) handlers_.onOverlay(overlayOn_);
+                    return 0;
+                case ID_CLASSIFY:
+                    classifyOn_ = !classifyOn_;
+                    if (handlers_.onClassify) handlers_.onClassify(classifyOn_);
                     return 0;
                 case ID_AUTOSTART:
                     autostartOn_ = !autostartOn_;

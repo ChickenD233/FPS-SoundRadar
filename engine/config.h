@@ -24,7 +24,8 @@ struct AppConfig {
     AnalysisConfig analysis;    // thresholds, fade
     std::wstring outputDevice;  // render endpoint name substring, empty = default
     OverlayConfig overlay;
-    bool autostart = false;     // consumed by the autostart milestone
+    bool autostart = false;       // consumed by the autostart milestone
+    bool classifyEnabled = true;  // experimental sound classification display
 };
 
 // Default path: %APPDATA%/SoundRadar/config.json

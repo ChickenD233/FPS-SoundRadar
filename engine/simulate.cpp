@@ -3,15 +3,21 @@
 namespace sr {
 
 Simulator::Simulator(SimScenario scenario, SharedMeters* meters, HANDLE quitEvent)
-    : scenario_(scenario), meters_(meters), quitEvent_(quitEvent) {}
+    : scenario_(scenario), meters_(meters), quitEvent_(quitEvent) {
+    stopEvent_ = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+}
 
-Simulator::~Simulator() { Stop(); }
+Simulator::~Simulator() {
+    Stop();
+    if (stopEvent_) CloseHandle(stopEvent_);
+}
 
 void Simulator::Start() {
     if (!thread_.joinable()) thread_ = std::thread(&Simulator::ThreadMain, this);
 }
 
 void Simulator::Stop() {
+    if (stopEvent_) SetEvent(stopEvent_);
     if (thread_.joinable()) thread_.join();
 }
 
@@ -19,9 +25,10 @@ void Simulator::SetSilent(bool silent) { silent_.store(silent); }
 
 void Simulator::ThreadMain() {
     const DWORD tickMs = 20; // 50 Hz updates, like the analyzer on 10 ms packets
+    HANDLE waits[2] = { quitEvent_, stopEvent_ };
     float level[8] = {};
     uint64_t t = 0;
-    while (WaitForSingleObject(quitEvent_, tickMs) == WAIT_TIMEOUT) {
+    while (WaitForMultipleObjects(2, waits, FALSE, tickMs) == WAIT_TIMEOUT) {
         t += tickMs;
         float target[8] = {};
         if (!silent_.load()) {

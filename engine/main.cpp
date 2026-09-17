@@ -17,6 +17,7 @@
 #include "../overlay/overlay.h"
 #include "analysis.h"
 #include "capture.h"
+#include "classify.h"
 #include "config.h"
 #include "downmix.h"
 #include "measure.h"
@@ -51,6 +52,7 @@ void PrintUsage() {
         "  (no args)              run engine + overlay + tray in the console\n"
         "  --tray                 run hidden (no console), tray icon only\n"
         "  --selftest             DSP self-tests (no audio devices needed), exit 0/1\n"
+        "  --classifytest         sound classification tests (experimental), exit 0/1\n"
         "  --overlaytest [bmp]    overlay checks: ex-style, CPU active/idle, screenshot\n"
         "  --simulate <scenario>  sweep | dual | pulse; feeds synthetic meters ~12 s\n"
         "  --simulate-screenshot <file.bmp>  render one dual frame to a BMP\n"
@@ -153,9 +155,11 @@ int RunApp(sr::AppConfig& cfg, const std::wstring& configPath) {
     std::printf("running - tray icon for controls, Ctrl+C to stop\n\n");
 
     sr::g_downmixMode.store(static_cast<int>(cfg.downmix.mode));
+    sr::g_classifyEnabled.store(cfg.classifyEnabled);
 
     sr::RingBuffer ring(8192);
     sr::Analyzer analyzer(cfg.analysis);
+    sr::Classifier8 classifier; // experimental, per-channel, capture thread
     sr::SharedMeters meters;
 
     sr::Overlay overlay;
@@ -165,9 +169,12 @@ int RunApp(sr::AppConfig& cfg, const std::wstring& configPath) {
         cap.Run([&](const float* frames, uint32_t n, LONGLONG) {
             sr::AnalysisFrame fr;
             analyzer.Process(frames, n, fr); // pre-downmix, full 8ch
+            classifier.Process(frames, n);   // per-channel, independent
             {
                 std::lock_guard<std::mutex> lk(meters.mu);
                 meters.frame = fr;
+                for (int c = 0; c < 8; ++c)
+                    meters.classes[c] = static_cast<uint8_t>(classifier.ClassOf(c));
             }
             ring.Write(frames, n);
         }, g_quit);
@@ -204,6 +211,11 @@ int RunApp(sr::AppConfig& cfg, const std::wstring& configPath) {
         if (on) overlay.Start(cfg.overlay, &meters, g_quit);
         else overlay.Stop();
         cfg.overlay.enabled = on;
+        sr::SaveConfig(configPath, cfg);
+    };
+    handlers.onClassify = [&](bool on) {
+        sr::g_classifyEnabled.store(on);
+        cfg.classifyEnabled = on;
         sr::SaveConfig(configPath, cfg);
     };
     handlers.onAutostart = [&](bool on) {
@@ -271,7 +283,8 @@ int RunSimulate(sr::AppConfig cfg, sr::SimScenario scenario) {
     return ok ? 0 : 1;
 }
 
-// One-command overlay CI check: ex-style, CPU active/idle, screenshot.
+// One-command overlay CI check: ex-style, CPU active/idle, screenshots.
+// Screenshots written next to shotPath: <base>-dual.bmp/-sweep.bmp/-pulse.bmp.
 int RunOverlayTest(sr::AppConfig cfg, const std::wstring& shotPath) {
     cfg.overlay.enabled = true;
     sr::SharedMeters meters;
@@ -295,21 +308,51 @@ int RunOverlayTest(sr::AppConfig cfg, const std::wstring& shotPath) {
     Sleep(3000);
     sr::Overlay::Stats idle = overlay.GetStats();
 
-    std::printf("overlay render thread CPU: active %.2f%% (%llu frames in window), "
-                "idle %.2f%%\n",
+    std::printf("overlay render thread CPU: active %.3f%% (%llu frames in window), "
+                "idle %.3f%%\n",
                 active.activeCpuPct, (unsigned long long)active.frames, idle.idleCpuPct);
 
-    float dualLevels[8] = {};
-    dualLevels[0] = 0.8f; // FL
-    dualLevels[5] = 0.8f; // BR
+    // three scenario screenshots; dual/pulse also show classification markers
     int w = GetSystemMetrics(SM_CXSCREEN), h = GetSystemMetrics(SM_CYSCREEN);
-    bool shot = sr::RenderSceneToFile(shotPath, w, h, dualLevels, cfg.overlay);
-    std::printf("screenshot: %s (%s)\n", sr::ToUtf8(shotPath).c_str(),
-                shot ? "written" : "FAILED");
+    auto baseName = [&](const wchar_t* tag) {
+        size_t dot = shotPath.find_last_of(L'.');
+        std::wstring stem = dot == std::wstring::npos ? shotPath : shotPath.substr(0, dot);
+        return stem + L"-" + tag + L".bmp";
+    };
+    bool shot = true;
+    {
+        float dualLevels[8] = {};
+        dualLevels[0] = 0.8f; // FL
+        dualLevels[5] = 0.8f; // BR
+        uint8_t cls[8] = {};
+        cls[0] = sr::SoundFootstep;
+        cls[5] = sr::SoundGunshot;
+        std::wstring p = baseName(L"dual");
+        bool ok = sr::RenderSceneToFile(p, w, h, dualLevels, cls, cfg.overlay);
+        std::printf("screenshot: %s (%s)\n", sr::ToUtf8(p).c_str(), ok ? "written" : "FAILED");
+        shot = shot && ok;
+    }
+    {
+        float sweepLevels[8] = {};
+        sweepLevels[7] = 0.85f; // SR mid-sweep
+        std::wstring p = baseName(L"sweep");
+        bool ok = sr::RenderSceneToFile(p, w, h, sweepLevels, nullptr, cfg.overlay);
+        std::printf("screenshot: %s (%s)\n", sr::ToUtf8(p).c_str(), ok ? "written" : "FAILED");
+        shot = shot && ok;
+    }
+    {
+        float pulseLevels[8] = {};
+        pulseLevels[6] = 0.9f; // SL burst
+        uint8_t cls[8] = {};
+        cls[6] = sr::SoundFootstep;
+        std::wstring p = baseName(L"pulse");
+        bool ok = sr::RenderSceneToFile(p, w, h, pulseLevels, cls, cfg.overlay);
+        std::printf("screenshot: %s (%s)\n", sr::ToUtf8(p).c_str(), ok ? "written" : "FAILED");
+        shot = shot && ok;
+    }
 
     sim.Stop();
     overlay.Stop();
-
     bool cpuOk = active.activeCpuPct < 5.0 && idle.idleCpuPct < 2.0;
     bool framesOk = active.frames > 100; // ~60 fps over the 4 s window
     bool ok = styleOk && cpuOk && framesOk && shot;
@@ -329,7 +372,7 @@ int wmain(int argc, wchar_t** argv) {
     std::wstring simScenario;
     std::wstring overlayTestShot;
     bool selftest = false, measure = false, measureLoopback = false, list = false;
-    bool trayMode = false, overlayTest = false;
+    bool trayMode = false, overlayTest = false, classifyTest = false;
 
     for (int i = 1; i < argc; ++i) {
         std::wstring a = argv[i];
@@ -341,6 +384,7 @@ int wmain(int argc, wchar_t** argv) {
             return argv[++i];
         };
         if (a == L"--selftest") selftest = true;
+        else if (a == L"--classifytest") classifyTest = true;
         else if (a == L"--measure") measure = true;
         else if (a == L"--measure-loopback") measureLoopback = true;
         else if (a == L"--list-devices") list = true;
@@ -365,6 +409,7 @@ int wmain(int argc, wchar_t** argv) {
     }
 
     if (selftest) return sr::RunSelfTest();
+    if (classifyTest) return sr::RunClassifyTest();
     if (list) {
         ListDevices();
         return 0;
@@ -407,12 +452,15 @@ int wmain(int argc, wchar_t** argv) {
 
     int rc = 0;
     if (!screenshotPath.empty()) {
-        // one dual-scenario frame at primary-monitor size
+        // one dual-scenario frame at primary-monitor size, with class markers
         float dualLevels[8] = {};
         dualLevels[0] = 0.8f;
         dualLevels[5] = 0.8f;
+        uint8_t cls[8] = {};
+        cls[0] = sr::SoundFootstep;
+        cls[5] = sr::SoundGunshot;
         int w = GetSystemMetrics(SM_CXSCREEN), h = GetSystemMetrics(SM_CYSCREEN);
-        bool ok = sr::RenderSceneToFile(screenshotPath, w, h, dualLevels, cfg.overlay);
+        bool ok = sr::RenderSceneToFile(screenshotPath, w, h, dualLevels, cls, cfg.overlay);
         std::printf("screenshot %s: %s\n", ok ? "written" : "FAILED",
                     sr::ToUtf8(screenshotPath).c_str());
         rc = ok ? 0 : 1;

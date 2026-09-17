@@ -20,6 +20,7 @@ public:
     struct Handlers {
         std::function<void(int mode)> onMode;   // DownmixMode as int
         std::function<void(bool on)> onOverlay;
+        std::function<void(bool on)> onClassify; // experimental sound classification
         std::function<void(bool on)> onAutostart;
         std::function<void()> onExit;
         std::function<void()> onTick;           // 500 ms, used for console meter
@@ -43,6 +44,7 @@ private:
     Handlers handlers_;
     int mode_ = 0;
     bool overlayOn_ = true;
+    bool classifyOn_ = true;
     bool autostartOn_ = false;
     static constexpr UINT kTrayMsg = WM_USER + 100;
     static constexpr UINT kTimerId = 1;
