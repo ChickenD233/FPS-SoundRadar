@@ -11,6 +11,7 @@ namespace sr {
 
 namespace {
 
+constexpr UINT ID_OPEN_GUI = 1000;
 constexpr UINT ID_MODE_RIGHTMONO = 1001;
 constexpr UINT ID_MODE_STEREO = 1002;
 constexpr UINT ID_OVERLAY = 1010;
@@ -181,6 +182,19 @@ void Tray::Notify(const std::wstring& title, const std::wstring& msg) {
     Shell_NotifyIconW(NIM_MODIFY, &nid);
 }
 
+void Tray::Balloon(const std::wstring& text) {
+    if (!hwnd_) return;
+    NOTIFYICONDATAW nid = {};
+    nid.cbSize = sizeof(nid);
+    nid.hWnd = hwnd_;
+    nid.uID = 1;
+    nid.uFlags = NIF_INFO;
+    nid.dwInfoFlags = NIIF_WARNING;
+    wcscpy_s(nid.szInfoTitle, L"SoundRadar");
+    wcsncpy_s(nid.szInfo, text.c_str(), _TRUNCATE);
+    Shell_NotifyIconW(NIM_MODIFY, &nid);
+}
+
 void Tray::Run(HANDLE quitEvent) {
     while (true) {
         DWORD r = MsgWaitForMultipleObjects(1, &quitEvent, FALSE, INFINITE, QS_ALLINPUT);
@@ -222,6 +236,8 @@ void Tray::ShowMenu() {
         modeMenu_ = CreatePopupMenu();
         AppendMenuW(modeMenu_, MF_STRING, ID_MODE_RIGHTMONO, L"右耳单声道 Right-Mono");
         AppendMenuW(modeMenu_, MF_STRING, ID_MODE_STEREO, L"立体声 Stereo");
+        AppendMenuW(menu_, MF_STRING, ID_OPEN_GUI, L"打开主界面 Open");
+        AppendMenuW(menu_, MF_SEPARATOR, 0, nullptr);
         AppendMenuW(menu_, MF_POPUP, reinterpret_cast<UINT_PTR>(modeMenu_), L"模式 Mode");
         AppendMenuW(menu_, MF_STRING, ID_OVERLAY, L"声纹显示 Overlay");
         AppendMenuW(menu_, MF_STRING, ID_CLASSIFY, L"声音分类 Sound classification (实验性)");
@@ -247,6 +263,9 @@ LRESULT Tray::HandleMessage(UINT msg, WPARAM wp, LPARAM lp) {
             return 0;
         case WM_COMMAND:
             switch (LOWORD(wp)) {
+                case ID_OPEN_GUI:
+                    if (handlers_.onOpenGui) handlers_.onOpenGui();
+                    return 0;
                 case ID_MODE_RIGHTMONO:
                 case ID_MODE_STEREO:
                     mode_ = (LOWORD(wp) == ID_MODE_RIGHTMONO) ? 0 : 1;

@@ -1,10 +1,18 @@
 // overlay.cpp - DirectComposition + Direct2D overlay implementation.
 //
+// Design (M5 redesign): a thin hollow ring at screen center-bottom - the
+// player sees through the middle. Per-channel chevron arrows sit ON the ring
+// and point outward at each direction (damage-indicator style, Apex/CS2 HUD).
+// Level 0 = invisible; louder = thicker, brighter, plus an outer glow (arrow
+// drawn 3x with increasing width / decreasing alpha). Onset ripple: a short
+// expanding ring at the arrow position when a channel goes silent -> active.
+// Edge bands: thin strips, alpha fading sideways (sliced gradient), low alpha.
+// LFE has no direction: it brightens the whole ring.
+//
 // Why DComp and not UpdateLayeredWindowIndirect: the window is full-screen;
 // pushing a per-pixel-alpha 32bpp full-screen bitmap through ULW at 60 fps is
-// an ~8 MB CPU copy per frame plus DWM read-back. With DComp the swapchain is
-// composed by DWM on the GPU, so a frame is just a few draw calls + Present.
-// Measured CPU in the render thread is well under the 5% budget (see report).
+// an ~8 MB CPU copy per frame. With DComp the swapchain is composed by DWM on
+// the GPU, so a frame is just a few draw calls + Present.
 #include "overlay.h"
 
 #include "../engine/wasapi_util.h" // ComInit
@@ -19,6 +27,7 @@
 
 #include <cmath>
 #include <cstdio>
+#include <cstring>
 
 #pragma comment(lib, "d3d11")
 #pragma comment(lib, "d2d1")
@@ -36,10 +45,9 @@ namespace {
 constexpr float kPi = 3.14159265358979f;
 
 // Channel order: FL FR C LFE BL BR SL SR. Angle: 0 deg = up/front, clockwise
-// positive; -1 marks LFE (rendered as a center circle, no direction).
+// positive; LFE has no direction (it brightens the ring instead).
 constexpr float kAngleDeg[8] = { 330.f, 30.f, 0.f, -1.f, 225.f, 135.f, 270.f, 90.f };
 constexpr wchar_t kLabel[8][4] = { L"FL", L"FR", L"C", L"LFE", L"BL", L"BR", L"SL", L"SR" };
-constexpr float kSectorHalfSpread = 25.f;
 
 D2D1_POINT_2F DirFromDeg(float deg) {
     float a = deg * kPi / 180.f;
@@ -47,19 +55,20 @@ D2D1_POINT_2F DirFromDeg(float deg) {
 }
 
 // Green <= low, yellow low..high, red > high; alpha scales with level.
-D2D1_COLOR_F LevelColor(float lvl, const OverlayConfig& cfg) {
+D2D1_COLOR_F LevelColor(float lvl, const OverlayConfig& cfg, float alphaScale = 1.0f) {
     float a = (lvl <= 0.0f) ? 0.0f : (lvl > 1.0f ? 1.0f : lvl);
+    a *= alphaScale;
     if (lvl <= cfg.lowThreshold) return D2D1::ColorF(0.20f, 1.00f, 0.30f, a);
     if (lvl <= cfg.highThreshold) return D2D1::ColorF(1.00f, 0.85f, 0.10f, a);
     return D2D1::ColorF(1.00f, 0.15f, 0.10f, a);
 }
 
-// --- cached scene resources (created once per render target) ---------------
+// --- cached scene resources (rebuilt when the live config version moves) ---
 
 struct SceneResources {
-    ComPtr<ID2D1SolidColorBrush> brush;     // sectors/bands (color set per draw)
+    ComPtr<ID2D1SolidColorBrush> brush;     // arrows/ring/bands
     ComPtr<ID2D1SolidColorBrush> textBrush; // labels
-    ComPtr<ID2D1PathGeometry> sector[8];    // only non-LFE channels
+    ComPtr<ID2D1PathGeometry> arrow[8];     // chevron per direction (not LFE)
     D2D1_POINT_2F labelPos[8];
     ComPtr<IDWriteTextLayout> labelLayout[8];
     ComPtr<IDWriteTextLayout> fsLayout;     // "FS" footstep marker
@@ -67,24 +76,26 @@ struct SceneResources {
     ComPtr<IDWriteTextLayout> cornerLayout; // "实验性 Experimental"
 };
 
-ComPtr<ID2D1PathGeometry> MakeSector(ID2D1Factory* factory, float cx, float cy,
-                                     float r, float centerDeg) {
+// Chevron on the ring pointing outward at `deg`: base sits on the ring, tip
+// outside it, inner notch makes it read as an arrow.
+ComPtr<ID2D1PathGeometry> MakeArrow(ID2D1Factory* factory, float cx, float cy,
+                                    float r, float deg) {
+    D2D1_POINT_2F d = DirFromDeg(deg);
+    D2D1_POINT_2F p = D2D1::Point2F(d.y, -d.x); // perpendicular (rotated -90)
+    const float halfW = 9.0f, tipLen = 15.0f, notch = 5.0f;
+    D2D1_POINT_2F tip = D2D1::Point2F(cx + (r + tipLen) * d.x, cy + (r + tipLen) * d.y);
+    D2D1_POINT_2F b1 = D2D1::Point2F(cx + r * d.x + halfW * p.x, cy + r * d.y + halfW * p.y);
+    D2D1_POINT_2F in = D2D1::Point2F(cx + (r + notch) * d.x, cy + (r + notch) * d.y);
+    D2D1_POINT_2F b2 = D2D1::Point2F(cx + r * d.x - halfW * p.x, cy + r * d.y - halfW * p.y);
+
     ComPtr<ID2D1PathGeometry> geo;
     if (FAILED(factory->CreatePathGeometry(&geo))) return nullptr;
     ComPtr<ID2D1GeometrySink> sink;
     if (FAILED(geo->Open(&sink))) return nullptr;
-    float a1 = centerDeg - kSectorHalfSpread;
-    float a2 = centerDeg + kSectorHalfSpread;
-    D2D1_POINT_2F d1 = DirFromDeg(a1), d2 = DirFromDeg(a2);
-    sink->BeginFigure(D2D1::Point2F(cx, cy), D2D1_FIGURE_BEGIN_FILLED);
-    sink->AddLine(D2D1::Point2F(cx + r * d1.x, cy + r * d1.y));
-    D2D1_ARC_SEGMENT arc = {};
-    arc.point = D2D1::Point2F(cx + r * d2.x, cy + r * d2.y);
-    arc.size = D2D1::SizeF(r, r);
-    arc.rotationAngle = 0.0f;
-    arc.sweepDirection = D2D1_SWEEP_DIRECTION_CLOCKWISE; // y-down: visually clockwise
-    arc.arcSize = D2D1_ARC_SIZE_SMALL;
-    sink->AddArc(&arc);
+    sink->BeginFigure(tip, D2D1_FIGURE_BEGIN_FILLED);
+    sink->AddLine(b1);
+    sink->AddLine(in);
+    sink->AddLine(b2);
     sink->EndFigure(D2D1_FIGURE_END_CLOSED);
     sink->Close();
     return geo;
@@ -105,7 +116,7 @@ HRESULT CreateSceneResources(ID2D1Factory* d2dFactory, IDWriteFactory* dwFactory
     ComPtr<IDWriteTextFormat> fmt;
     hr = dwFactory->CreateTextFormat(L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_SEMI_BOLD,
                                      DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL,
-                                     11.0f, L"", &fmt);
+                                     10.0f, L"", &fmt);
     if (FAILED(hr)) return hr;
     fmt->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
     fmt->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
@@ -116,15 +127,16 @@ HRESULT CreateSceneResources(ID2D1Factory* d2dFactory, IDWriteFactory* dwFactory
         if (FAILED(hr)) return hr;
         DWRITE_TEXT_METRICS m = {};
         res.labelLayout[c]->GetMetrics(&m);
-        if (c == 3) { // LFE label sits below the center circle
-            res.labelPos[c] = D2D1::Point2F(cx - m.width / 2, cy + 14.0f);
+        if (c == 3) { // LFE label under the ring center
+            res.labelPos[c] = D2D1::Point2F(cx - m.width / 2, cy + 6.0f);
             continue;
         }
+        res.arrow[c] = MakeArrow(d2dFactory, cx, cy, r, kAngleDeg[c]);
+        if (!res.arrow[c]) return E_FAIL;
+        // label just inside the ring at that direction
         D2D1_POINT_2F d = DirFromDeg(kAngleDeg[c]);
-        res.sector[c] = MakeSector(d2dFactory, cx, cy, r, kAngleDeg[c]);
-        if (!res.sector[c]) return E_FAIL;
-        res.labelPos[c] = D2D1::Point2F(cx + r * 0.58f * d.x - m.width / 2,
-                                        cy + r * 0.58f * d.y - m.height / 2);
+        res.labelPos[c] = D2D1::Point2F(cx + r * 0.72f * d.x - m.width / 2,
+                                        cy + r * 0.72f * d.y - m.height / 2);
     }
     // classification markers
     hr = dwFactory->CreateTextLayout(L"FS", 2, fmt.Get(), 48.0f, 24.0f, &res.fsLayout);
@@ -142,51 +154,87 @@ HRESULT CreateSceneResources(ID2D1Factory* d2dFactory, IDWriteFactory* dwFactory
     return hr;
 }
 
+// Edge band as a 5-slice sideways-fading strip: strong at the center of the
+// direction's edge segment, fading to the sides. Thin, low alpha.
 void DrawBand(ID2D1RenderTarget* rt, const SceneResources& res, const OverlayConfig& cfg,
               float lvl, const D2D1_RECT_F& span, int edge /*0=top 1=right 2=bottom 3=left*/) {
     if (lvl <= 0.02f) return; // zero level = invisible
-    float t = 3.0f + 24.0f * (lvl > 1.0f ? 1.0f : lvl); // thickness scales with level
-    D2D1_RECT_F r = span;
-    switch (edge) {
-        case 0: r.bottom = span.top + t; break;
-        case 1: r.left = span.right - t; break;
-        case 2: r.top = span.bottom - t; break;
-        case 3: r.right = span.left + t; break;
+    const float profile[5] = { 0.20f, 0.55f, 1.0f, 0.55f, 0.20f };
+    float t = 2.0f + 14.0f * (lvl > 1.0f ? 1.0f : lvl);
+    bool horiz = (edge == 0 || edge == 2);
+    float lo = horiz ? span.left : span.top;
+    float hi = horiz ? span.right : span.bottom;
+    float len = hi - lo;
+    for (int i = 0; i < 5; ++i) {
+        float a0 = lo + len * i / 5.0f, a1 = lo + len * (i + 1) / 5.0f;
+        D2D1_RECT_F r;
+        switch (edge) {
+            case 0: r = D2D1::RectF(a0, span.top, a1, span.top + t); break;
+            case 1: r = D2D1::RectF(span.right - t, a0, span.right, a1); break;
+            case 2: r = D2D1::RectF(a0, span.bottom - t, a1, span.bottom); break;
+            default: r = D2D1::RectF(span.left, a0, span.left + t, a1); break;
+        }
+        res.brush->SetColor(LevelColor(lvl, cfg, profile[i] * 0.8f));
+        rt->FillRectangle(&r, res.brush.Get());
     }
-    res.brush->SetColor(LevelColor(lvl, cfg));
-    rt->FillRectangle(&r, res.brush.Get());
 }
 
+// pulse[c]: 0 = none, else 0..1 progress of the onset ripple (~200 ms).
 void DrawScene(ID2D1RenderTarget* rt, const SceneResources& res, const OverlayConfig& cfg,
                const float levels[8], const uint8_t* classes, bool classifyOn,
-               int w, int h) {
+               const float* pulse, int w, int h) {
     float cx = w * 0.5f + static_cast<float>(cfg.offsetX);
     float cy = h * 0.5f + static_cast<float>(cfg.offsetY);
     float r = static_cast<float>(cfg.radius);
+    float fx = cfg.fxPct / 100.0f; // effects intensity 0..1
 
-    // faint orientation ring
-    res.brush->SetColor(D2D1::ColorF(1, 1, 1, 0.12f));
-    rt->DrawEllipse(D2D1::Ellipse(D2D1::Point2F(cx, cy), r, r), res.brush.Get(), 1.0f);
+    float maxLvl = 0.0f;
+    for (int c = 0; c < 8; ++c) if (levels[c] > maxLvl) maxLvl = levels[c];
 
-    // radar sectors (never merged: straight from the 8 analyzer levels)
+    // hollow ring; LFE brightens it
+    float ringAlpha = 0.25f + 0.45f * levels[3];
+    float ringStroke = 2.0f + 1.5f * levels[3];
+    res.brush->SetColor(D2D1::ColorF(1, 1, 1, ringAlpha));
+    rt->DrawEllipse(D2D1::Ellipse(D2D1::Point2F(cx, cy), r, r), res.brush.Get(), ringStroke);
+
+    // tiny center dot only while sound is active
+    if (maxLvl > 0.02f) {
+        res.brush->SetColor(D2D1::ColorF(1, 1, 1, 0.3f));
+        rt->FillEllipse(D2D1::Ellipse(D2D1::Point2F(cx, cy), 2.0f, 2.0f), res.brush.Get());
+    }
+
+    // direction arrows (never merged: straight from the 8 analyzer levels)
     for (int c = 0; c < 8; ++c) {
-        if (c == 3) continue; // LFE
+        if (c == 3 || !res.arrow[c]) continue;
         float lvl = levels[c];
-        if (lvl > 0.02f && res.sector[c]) {
-            res.brush->SetColor(LevelColor(lvl, cfg));
-            rt->FillGeometry(res.sector[c].Get(), res.brush.Get());
+        if (lvl <= 0.02f) continue;
+        float thickness = 1.5f + 2.5f * lvl;
+        D2D1_COLOR_F col = LevelColor(lvl, cfg);
+        if (fx > 0.0f) {
+            // outer glow: two wider, dimmer strokes behind the arrow
+            res.brush->SetColor(LevelColor(lvl, cfg, 0.14f * fx));
+            rt->DrawGeometry(res.arrow[c].Get(), res.brush.Get(), thickness + 5.0f * fx);
+            res.brush->SetColor(LevelColor(lvl, cfg, 0.30f * fx));
+            rt->DrawGeometry(res.arrow[c].Get(), res.brush.Get(), thickness + 2.5f * fx);
+        }
+        res.brush->SetColor(col);
+        rt->FillGeometry(res.arrow[c].Get(), res.brush.Get());
+        rt->DrawGeometry(res.arrow[c].Get(), res.brush.Get(), thickness);
+
+        // onset ripple at the arrow position
+        if (pulse && pulse[c] > 0.0f && fx > 0.0f) {
+            float p = pulse[c]; // 0..1
+            D2D1_POINT_2F d = DirFromDeg(kAngleDeg[c]);
+            D2D1_POINT_2F at = D2D1::Point2F(cx + r * d.x, cy + r * d.y);
+            float rr = 4.0f + 16.0f * p;
+            res.brush->SetColor(LevelColor(lvl, cfg, (1.0f - p) * 0.5f * fx));
+            rt->DrawEllipse(D2D1::Ellipse(at, rr, rr), res.brush.Get(), 1.5f);
         }
     }
-    // LFE: center circle pulse
-    if (levels[3] > 0.02f) {
-        res.brush->SetColor(LevelColor(levels[3], cfg));
-        rt->FillEllipse(D2D1::Ellipse(D2D1::Point2F(cx, cy), 6.0f + 20.0f * levels[3],
-                                      6.0f + 20.0f * levels[3]),
-                        res.brush.Get());
-    }
+
     // labels (cached text layouts; dim when the channel is quiet)
     for (int c = 0; c < 8; ++c) {
-        float a = 0.35f + 0.55f * (levels[c] > 1.0f ? 1.0f : levels[c]);
+        float a = 0.30f + 0.55f * (levels[c] > 1.0f ? 1.0f : levels[c]);
         res.textBrush->SetColor(D2D1::ColorF(1, 1, 1, a));
         rt->DrawTextLayout(res.labelPos[c], res.labelLayout[c].Get(), res.textBrush.Get());
     }
@@ -196,24 +244,22 @@ void DrawScene(ID2D1RenderTarget* rt, const SceneResources& res, const OverlayCo
         for (int c = 0; c < 8; ++c) {
             uint8_t cls = classes[c];
             if (cls == SoundNone) continue;
-            D2D1_POINT_2F mp = D2D1::Point2F(res.labelPos[c].x, res.labelPos[c].y + 16.0f);
+            D2D1_POINT_2F mp = D2D1::Point2F(res.labelPos[c].x, res.labelPos[c].y + 14.0f);
             if (cls == SoundFootstep) {
                 res.brush->SetColor(D2D1::ColorF(1.0f, 0.6f, 0.1f, 0.95f));
-                if (res.sector[c])
-                    rt->DrawGeometry(res.sector[c].Get(), res.brush.Get(), 2.0f);
-                else // LFE: ring around the center circle
+                if (res.arrow[c])
+                    rt->DrawGeometry(res.arrow[c].Get(), res.brush.Get(), 2.0f);
+                else
                     rt->DrawEllipse(D2D1::Ellipse(D2D1::Point2F(cx, cy), 30.0f, 30.0f),
                                     res.brush.Get(), 2.0f);
                 res.textBrush->SetColor(D2D1::ColorF(1.0f, 0.6f, 0.1f, 0.95f));
                 rt->DrawTextLayout(mp, res.fsLayout.Get(), res.textBrush.Get());
             } else if (cls == SoundGunshot) {
-                res.brush->SetColor(D2D1::ColorF(1.0f, 0.1f, 0.1f, 0.55f));
-                if (res.sector[c]) {
-                    rt->FillGeometry(res.sector[c].Get(), res.brush.Get()); // red flash
-                    res.brush->SetColor(D2D1::ColorF(1.0f, 0.1f, 0.1f, 0.95f));
-                    rt->DrawGeometry(res.sector[c].Get(), res.brush.Get(), 3.0f);
+                res.brush->SetColor(D2D1::ColorF(1.0f, 0.1f, 0.1f, 0.85f));
+                if (res.arrow[c]) {
+                    rt->FillGeometry(res.arrow[c].Get(), res.brush.Get()); // red flash
+                    rt->DrawGeometry(res.arrow[c].Get(), res.brush.Get(), 3.0f);
                 } else {
-                    res.brush->SetColor(D2D1::ColorF(1.0f, 0.1f, 0.1f, 0.7f));
                     rt->FillEllipse(D2D1::Ellipse(D2D1::Point2F(cx, cy), 26.0f, 26.0f),
                                     res.brush.Get());
                 }
@@ -240,12 +286,6 @@ void DrawScene(ID2D1RenderTarget* rt, const SceneResources& res, const OverlayCo
     DrawBand(rt, res, cfg, levels[0], D2D1::RectF(0, 0, 0, H / 3), 3);          // left FL
     DrawBand(rt, res, cfg, levels[6], D2D1::RectF(0, H / 3, 0, 2 * H / 3), 3);  // left SL
     DrawBand(rt, res, cfg, levels[4], D2D1::RectF(0, 2 * H / 3, 0, H), 3);      // left BL
-    // LFE dot at bottom-center
-    if (levels[3] > 0.02f) {
-        res.brush->SetColor(LevelColor(levels[3], cfg));
-        float t = 4.0f + 16.0f * levels[3];
-        rt->FillEllipse(D2D1::Ellipse(D2D1::Point2F(W / 2, H - t - 4), t, t), res.brush.Get());
-    }
 }
 
 const wchar_t* kWndClass = L"SoundRadarOverlay";
@@ -281,7 +321,6 @@ struct CpuProbe {
         cpu0 = CpuNow(self);
         wall0 = GetTickCount64();
     }
-    // wall in ms -> 100 ns ticks
     void End(std::atomic<uint64_t>& cpuAcc, std::atomic<uint64_t>& wallAcc) {
         uint64_t cpu1 = CpuNow(self);
         uint64_t wall1 = GetTickCount64();
@@ -297,12 +336,19 @@ Overlay::~Overlay() { Stop(); }
 bool Overlay::Start(const OverlayConfig& cfg, SharedMeters* meters, HANDLE quitEvent) {
     if (running_.load()) return true;
     cfg_ = cfg;
+    {
+        // publish as the live config so Apply works even before the first frame
+        std::lock_guard<std::mutex> lk(g_overlay.mu);
+        g_overlay.cfg = cfg;
+        ++g_overlay.version;
+    }
     meters_ = meters;
     quitEvent_ = quitEvent;
     if (!stopEvent_) stopEvent_ = CreateEventW(nullptr, TRUE, FALSE, nullptr);
     ResetEvent(stopEvent_);
     ResetStats();
     frames_.store(0);
+    appliedVersion_.store(0);
     hwnd_.store(nullptr);
     thread_ = std::thread(&Overlay::ThreadMain, this);
     return true;
@@ -430,6 +476,17 @@ void Overlay::ThreadMain() {
     if (!initOk)
         fwprintf(stderr, L"overlay: device init failed (hr=0x%08lx)\n",
                  static_cast<unsigned long>(hr));
+    uint32_t seenCfgVersion = 0;
+    {
+        std::lock_guard<std::mutex> lk(g_overlay.mu);
+        seenCfgVersion = g_overlay.version;
+    }
+    appliedVersion_.store(seenCfgVersion);
+
+    // onset ripple state: per-channel level edge detection
+    float prevLevel[8] = {};
+    float pulse[8] = {};
+    uint64_t lastTick = GetTickCount64();
 
     // --- render loop: ~60 fps while audio active, ~4 fps polling when idle --
     HANDLE waits[2] = { quitEvent_, stopEvent_ };
@@ -437,6 +494,18 @@ void Overlay::ThreadMain() {
         // drain any window messages (rare: we never take input)
         MSG msg;
         while (PeekMessageW(&msg, hwnd, 0, 0, PM_REMOVE)) DispatchMessageW(&msg);
+
+        // hot-apply overlay config (GUI Apply bumps g_overlay.version)
+        {
+            std::lock_guard<std::mutex> lk(g_overlay.mu);
+            if (g_overlay.version != seenCfgVersion) {
+                cfg_ = g_overlay.cfg;
+                seenCfgVersion = g_overlay.version;
+                CreateSceneResources(d2dFactory.Get(), dwFactory.Get(), dc.Get(), cfg_,
+                                     w, h, res);
+                appliedVersion_.store(seenCfgVersion);
+            }
+        }
 
         AnalysisFrame frame;
         uint8_t classes[8] = {};
@@ -448,6 +517,20 @@ void Overlay::ThreadMain() {
         float maxLvl = 0.0f;
         for (int c = 0; c < 8; ++c) if (frame.level[c] > maxLvl) maxLvl = frame.level[c];
         bool active = frame.active || maxLvl > 0.02f;
+
+        // onset ripple timing (~200 ms), driven by silent->active edges
+        uint64_t nowTick = GetTickCount64();
+        float dt = static_cast<float>(nowTick - lastTick) / 1000.0f;
+        lastTick = nowTick;
+        for (int c = 0; c < 8; ++c) {
+            bool on = frame.level[c] >= 0.05f;
+            if (on && prevLevel[c] < 0.05f) pulse[c] = 0.001f; // start ripple
+            else if (pulse[c] > 0.0f) {
+                pulse[c] += dt / 0.2f;
+                if (pulse[c] >= 1.0f) pulse[c] = 0.0f;
+            }
+            prevLevel[c] = frame.level[c];
+        }
 
         // measure the whole iteration (sleep included) for a true loop CPU%
         CpuProbe probe;
@@ -472,7 +555,7 @@ void Overlay::ThreadMain() {
                 dc->BeginDraw();
                 dc->Clear(D2D1::ColorF(0, 0, 0, 0)); // fully transparent base
                 DrawScene(dc.Get(), res, cfg_, frame.level, classes,
-                          g_classifyEnabled.load(), w, h);
+                          g_classifyEnabled.load(), pulse, w, h);
                 fhr = dc->EndDraw();
                 dc->SetTarget(nullptr);
             }
@@ -543,9 +626,14 @@ bool RenderSceneToFile(const std::wstring& path, int width, int height,
         hr = CreateSceneResources(d2dFactory.Get(), dwFactory.Get(), rt.Get(), cfg,
                                   width, height, res);
     if (SUCCEEDED(hr)) {
+        // pulse screenshot shows a mid-ripple on active channels
+        float pulse[8] = {};
+        for (int c = 0; c < 8; ++c)
+            if (levels[c] > 0.05f) pulse[c] = 0.35f;
         rt->BeginDraw();
         rt->Clear(D2D1::ColorF(0.06f, 0.06f, 0.09f, 1.0f)); // opaque dark backdrop
-        DrawScene(rt.Get(), res, cfg, levels, classes, classes != nullptr, width, height);
+        DrawScene(rt.Get(), res, cfg, levels, classes, classes != nullptr, pulse,
+                  width, height);
         hr = rt->EndDraw();
     }
     if (FAILED(hr)) return false;

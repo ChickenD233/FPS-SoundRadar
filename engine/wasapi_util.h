@@ -33,6 +33,11 @@ bool NameContainsAll(const std::wstring& name,
                      const std::wstring& a,
                      const std::wstring& b = L"");
 
+// True for virtual audio endpoints (Voicemeeter buses, SoundRadar VAD).
+// Auto render selection must skip these: rendering into Voicemeeter Input
+// would feed back into the capture path.
+bool IsVirtualAudioName(const std::wstring& name);
+
 // Find first endpoint whose friendly name contains all needles.
 Microsoft::WRL::ComPtr<IMMDevice> FindEndpointByName(EDataFlow flow,
                                                      const std::wstring& a,

@@ -29,6 +29,8 @@ public:
     bool IsRunning() const { return running_.load(); }
     HWND Hwnd() const { return hwnd_.load(); }
     uint64_t FramesDrawn() const { return frames_.load(); }
+    // g_overlay.config version the render thread has applied (hot-apply check).
+    uint32_t AppliedVersion() const { return appliedVersion_.load(); }
 
     // Self-measured CPU of the render thread, split into active (~60 fps
     // drawing) and idle (~4 fps polling) buckets since the last ResetStats().
@@ -51,6 +53,7 @@ private:
     std::atomic<bool> running_{false};
     std::atomic<HWND> hwnd_{nullptr};
     std::atomic<uint64_t> frames_{0};
+    std::atomic<uint32_t> appliedVersion_{0};
     std::atomic<uint64_t> activeCpu_{0}, activeWall_{0};
     std::atomic<uint64_t> idleCpu_{0}, idleWall_{0};
 };

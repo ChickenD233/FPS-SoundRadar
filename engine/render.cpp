@@ -58,8 +58,33 @@ bool RenderClient::TryInitialize(const WAVEFORMATEX* wfx, bool exclusive,
 bool RenderClient::Init(const std::wstring& nameSub, std::wstring& err) {
     if (nameSub.empty()) {
         device_ = GetDefaultEndpoint(eRender);
+        // Never auto-select a virtual endpoint: if the Windows default output
+        // is "Voicemeeter Input" (so games route there) or the SoundRadar VAD
+        // speaker, rendering into it would feed back into our capture path.
+        if (device_) {
+            std::wstring defName;
+            {
+                Microsoft::WRL::ComPtr<IPropertyStore> props;
+                if (SUCCEEDED(device_->OpenPropertyStore(STGM_READ, &props))) {
+                    PROPVARIANT v;
+                    PropVariantInit(&v);
+                    if (SUCCEEDED(props->GetValue(PKEY_Device_FriendlyName, &v)) &&
+                        v.vt == VT_LPWSTR)
+                        defName = v.pwszVal;
+                    PropVariantClear(&v);
+                }
+            }
+            if (IsVirtualAudioName(defName)) {
+                for (const DeviceInfo& d : EnumerateEndpoints(eRender)) {
+                    if (!IsVirtualAudioName(d.name)) {
+                        device_ = FindEndpointByName(eRender, d.name);
+                        break;
+                    }
+                }
+            }
+        }
         if (!device_) {
-            err = L"No default render endpoint found.";
+            err = L"No usable render endpoint found (default is virtual, no physical device).";
             return false;
         }
     } else {

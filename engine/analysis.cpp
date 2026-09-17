@@ -11,6 +11,11 @@ static float PoleCoef(float ms, float sampleRate) {
 }
 
 Analyzer::Analyzer(const AnalysisConfig& cfg) : cfg_(cfg) {
+    SetConfig(cfg);
+}
+
+void Analyzer::SetConfig(const AnalysisConfig& cfg) {
+    cfg_ = cfg;
     attA_  = PoleCoef(cfg_.attackMs, cfg_.sampleRate);
     relA_  = PoleCoef(cfg_.releaseMs, cfg_.sampleRate);
     smA_   = PoleCoef(cfg_.smoothMs, cfg_.sampleRate);

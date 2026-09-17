@@ -72,9 +72,9 @@ Notes:
 
 ### Run
 
-`SoundRadar.exe --tray` starts in the tray. The tray menu switches the downmix mode, toggles the overlay and the experimental classification, and controls autostart. Settings live in `%APPDATA%\SoundRadar\config.json`.
+Double-click `SoundRadar.exe` to open the main window (devices, mode, overlay style, channel weights, status bar). Apply saves and hot-applies without a restart; closing the window minimizes to the tray. `SoundRadar.exe --tray` starts tray-only (used by autostart). The tray menu has 打开主界面 Open, downmix mode, overlay and classification toggles, and autostart. Settings live in `%APPDATA%\SoundRadar\config.json`; diagnostics in `%APPDATA%\SoundRadar\log.txt`. Only one instance runs at a time — a second launch focuses the existing window.
 
-Useful CLI flags: `--list-devices`, `--mode right-mono|stereo`, `--output <name>`, `--selftest`, `--measure`, `--measure-loopback`, `--pan-test [seconds]`, `--simulate sweep|dual|pulse`, `--overlaytest`, `--classifytest`.
+Useful CLI flags: `--list-devices`, `--mode right-mono|stereo`, `--output <name>`, `--selftest`, `--classifytest`, `--guitest`, `--simulate-gui`, `--measure`, `--measure-loopback`, `--pan-test [seconds]`, `--simulate sweep|dual|pulse`, `--overlaytest`.
 
 ### License
 
@@ -152,9 +152,9 @@ cmake --build build --config Release
 
 ### 运行
 
-`SoundRadar.exe --tray` 托盘启动。托盘菜单可切换下混模式、开关 Overlay 和实验性分类、控制开机自启。配置文件在 `%APPDATA%\SoundRadar\config.json`。
+双击 `SoundRadar.exe` 打开主界面（设备、模式、声纹样式、声道权重、状态栏）。应用按钮保存并即时生效，关闭窗口即最小化到托盘。`SoundRadar.exe --tray` 仅托盘运行（开机自启用此参数）。托盘菜单有 打开主界面、下混模式、声纹开关、实验性分类、开机自启。配置文件在 `%APPDATA%\SoundRadar\config.json`，诊断日志在 `%APPDATA%\SoundRadar\log.txt`。单实例运行：再次启动只会唤起已有窗口。
 
-常用命令行：`--list-devices`、`--mode right-mono|stereo`、`--output <设备名>`、`--selftest`、`--measure`、`--measure-loopback`、`--pan-test [秒数]`、`--simulate sweep|dual|pulse`、`--overlaytest`、`--classifytest`。
+常用命令行：`--list-devices`、`--mode right-mono|stereo`、`--output <设备名>`、`--selftest`、`--classifytest`、`--guitest`、`--simulate-gui`、`--measure`、`--measure-loopback`、`--pan-test [秒数]`、`--simulate sweep|dual|pulse`、`--overlaytest`。
 
 ### 许可证
 

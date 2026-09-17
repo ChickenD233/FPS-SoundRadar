@@ -32,6 +32,8 @@ public:
     explicit Analyzer(const AnalysisConfig& cfg = AnalysisConfig());
 
     void Reset();
+    // Hot-apply a new config (e.g. fade time from the GUI). Resets state.
+    void SetConfig(const AnalysisConfig& cfg);
     // in8: interleaved float, frames * 8 channels (pre-downmix, full 7.1).
     void Process(const float* in8, size_t frames, AnalysisFrame& out);
     const AnalysisFrame& Last() const { return last_; }

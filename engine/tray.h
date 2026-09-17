@@ -18,6 +18,7 @@ bool AutostartSet(bool enable);
 class Tray {
 public:
     struct Handlers {
+        std::function<void()> onOpenGui;         // 打开主界面
         std::function<void(int mode)> onMode;   // DownmixMode as int
         std::function<void(bool on)> onOverlay;
         std::function<void(bool on)> onClassify; // experimental sound classification
@@ -30,6 +31,9 @@ public:
     // Blocks. Returns when quitEvent is signaled or Exit chosen in the menu.
     void Run(HANDLE quitEvent);
     void Shutdown();
+
+    // One-shot info balloon (errors go here in tray mode, never MessageBox).
+    void Balloon(const std::wstring& text);
 
     // Tray balloon notification (non-modal). Call after Init.
     void Notify(const std::wstring& title, const std::wstring& msg);

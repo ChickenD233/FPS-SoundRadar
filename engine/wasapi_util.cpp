@@ -23,6 +23,10 @@ bool NameContainsAll(const std::wstring& name, const std::wstring& a, const std:
     return true;
 }
 
+bool IsVirtualAudioName(const std::wstring& name) {
+    return NameContainsAll(name, L"voicemeeter") || NameContainsAll(name, L"soundradar");
+}
+
 static std::wstring ReadFriendlyName(IMMDevice* dev) {
     Microsoft::WRL::ComPtr<IPropertyStore> props;
     if (FAILED(dev->OpenPropertyStore(STGM_READ, &props))) return L"";
