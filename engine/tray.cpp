@@ -168,6 +168,19 @@ void Tray::Shutdown() {
     }
 }
 
+void Tray::Notify(const std::wstring& title, const std::wstring& msg) {
+    if (!hwnd_) return;
+    NOTIFYICONDATAW nid = {};
+    nid.cbSize = sizeof(nid);
+    nid.hWnd = hwnd_;
+    nid.uID = 1;
+    nid.uFlags = NIF_INFO;
+    nid.dwInfoFlags = NIIF_WARNING;
+    wcsncpy_s(nid.szInfoTitle, title.c_str(), _TRUNCATE);
+    wcsncpy_s(nid.szInfo, msg.c_str(), _TRUNCATE);
+    Shell_NotifyIconW(NIM_MODIFY, &nid);
+}
+
 void Tray::Run(HANDLE quitEvent) {
     while (true) {
         DWORD r = MsgWaitForMultipleObjects(1, &quitEvent, FALSE, INFINITE, QS_ALLINPUT);

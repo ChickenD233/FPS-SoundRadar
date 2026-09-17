@@ -23,6 +23,9 @@ struct AppConfig {
     DownmixConfig downmix;      // mode + weights[8]
     AnalysisConfig analysis;    // thresholds, fade
     std::wstring outputDevice;  // render endpoint name substring, empty = default
+    // capture endpoint substring; default "SoundRadar" (also requires
+    // "loopback", then falls back to Voicemeeter B1/Output)
+    std::wstring captureDevice = L"SoundRadar";
     OverlayConfig overlay;
     bool autostart = false;       // consumed by the autostart milestone
     bool classifyEnabled = true;  // experimental sound classification display

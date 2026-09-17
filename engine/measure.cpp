@@ -26,7 +26,7 @@ double QpcToSec(LONGLONG qpc, LONGLONG freq) {
 
 } // namespace
 
-int RunMeasure(const std::wstring& outputName) {
+int RunMeasure(const std::wstring& outputName, const std::wstring& captureDevice) {
     ComInit com;
     if (!com.Ok()) {
         fwprintf(stderr, L"COM init failed\n");
@@ -35,7 +35,7 @@ int RunMeasure(const std::wstring& outputName) {
 
     CaptureClient cap;
     std::wstring err;
-    if (!cap.Init(err)) {
+    if (!cap.Init(captureDevice, err)) {
         std::fprintf(stderr, "%s\n", ToUtf8(err).c_str());
         return 2;
     }
@@ -149,9 +149,10 @@ int RunMeasureLoopback() {
         return 2;
     }
 
+    // loopback round-trip is SoundRadar-VAD-specific: hardcode the default rule
     CaptureClient cap;
     std::wstring err;
-    if (!cap.Init(err)) {
+    if (!cap.Init(L"SoundRadar", err)) {
         std::printf("SoundRadar loopback capture endpoint not found - driver absent? Skipping.\n");
         return 2;
     }

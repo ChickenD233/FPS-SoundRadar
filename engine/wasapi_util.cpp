@@ -104,6 +104,25 @@ Microsoft::WRL::ComPtr<IMMDevice> GetDefaultEndpoint(EDataFlow flow) {
     return dev;
 }
 
+std::vector<DeviceInfo> SelectCaptureEndpoints(const std::wstring& configValue) {
+    std::vector<DeviceInfo> all = EnumerateEndpoints(eCapture);
+    std::vector<DeviceInfo> out;
+    std::wstring needle = configValue.empty() ? L"SoundRadar" : configValue;
+    bool isDefault = NameContainsAll(L"SoundRadar", needle) &&
+                     needle.size() == 10; // case-insensitive "SoundRadar"
+
+    auto appendMatches = [&](const std::wstring& a, const std::wstring& b) {
+        for (const DeviceInfo& d : all)
+            if (NameContainsAll(d.name, a, b)) out.push_back(d);
+    };
+    appendMatches(needle, isDefault ? L"loopback" : L"");
+    if (out.empty() && isDefault) {
+        appendMatches(L"Voicemeeter Out B1", L"");
+        if (out.empty()) appendMatches(L"Voicemeeter Output", L"");
+    }
+    return out;
+}
+
 PcmFormat InspectFormat(const WAVEFORMATEX* wfx) {
     PcmFormat f;
     if (!wfx) return f;

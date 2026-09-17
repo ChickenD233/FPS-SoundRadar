@@ -130,6 +130,7 @@ bool LoadConfig(const std::wstring& path, AppConfig& cfg) {
     if (GetNumber(json, "release_ms", d)) cfg.analysis.releaseMs = static_cast<float>(d);
 
     if (GetString(json, "output_device", s)) cfg.outputDevice = Utf8ToWide(s);
+    if (GetString(json, "capture_device", s)) cfg.captureDevice = Utf8ToWide(s);
     GetBool(json, "overlay_enabled", cfg.overlay.enabled);
     GetBool(json, "autostart", cfg.autostart);
     if (GetNumber(json, "overlay_low", d)) cfg.overlay.lowThreshold = static_cast<float>(d);
@@ -165,6 +166,7 @@ bool SaveConfig(const std::wstring& path, const AppConfig& cfg) {
     f << "  \"activity_threshold\": " << cfg.analysis.activityThreshold << ",\n";
     f << "  \"peak_threshold\": " << cfg.analysis.peakThreshold << ",\n";
     f << "  \"output_device\": \"" << WideToUtf8(cfg.outputDevice) << "\",\n";
+    f << "  \"capture_device\": \"" << WideToUtf8(cfg.captureDevice) << "\",\n";
     f << "  \"overlay_enabled\": " << (cfg.overlay.enabled ? "true" : "false") << ",\n";
     f << "  \"overlay_low\": " << cfg.overlay.lowThreshold << ",\n";
     f << "  \"overlay_high\": " << cfg.overlay.highThreshold << ",\n";

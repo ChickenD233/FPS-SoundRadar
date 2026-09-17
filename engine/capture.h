@@ -1,4 +1,7 @@
-// capture.h - WASAPI event-driven capture from the SoundRadar loopback endpoint.
+// capture.h - WASAPI event-driven capture client. The endpoint is selected by
+// the capture_device config rule (see wasapi_util SelectCaptureEndpoints);
+// the stream is always converted to interleaved float32 8ch internally
+// (fewer source channels are prefix-mapped and zero-filled).
 #pragma once
 
 #include "wasapi_util.h"
@@ -26,9 +29,9 @@ public:
     CaptureClient() = default;
     ~CaptureClient();
 
-    // Finds the "SoundRadar"+"Loopback" capture endpoint and initializes a
-    // shared-mode, event-driven capture client with a ~10 ms buffer.
-    bool Init(std::wstring& err);
+    // Selects the capture endpoint per the capture_device config rule and
+    // initializes a shared-mode, event-driven capture client (~10 ms buffer).
+    bool Init(const std::wstring& captureDevice, std::wstring& err);
 
     // Blocking capture loop (call on a dedicated thread). Returns when
     // quitEvent is signaled or a fatal stream error occurs.
