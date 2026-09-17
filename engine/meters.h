@@ -8,6 +8,7 @@
 #include <mutex>
 
 #include "analysis.h"
+#include "classify.h" // SoundClass
 #include "downmix.h" // DownmixMode
 
 namespace sr {
@@ -15,9 +16,13 @@ namespace sr {
 struct SharedMeters {
     std::mutex mu;
     AnalysisFrame frame;
+    uint8_t classes[8] = {}; // SoundClass per channel (classification milestone)
 };
 
 // DownmixMode as int; written by the tray thread, read by the render thread.
 inline std::atomic<int> g_downmixMode{ DownmixRightMono };
+
+// Classification display toggle (tray). Read by the overlay thread.
+inline std::atomic<bool> g_classifyEnabled{ true };
 
 } // namespace sr

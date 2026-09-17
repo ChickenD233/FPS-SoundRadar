@@ -6,4 +6,7 @@ namespace sr {
 // Runs all tests, prints PASS/FAIL per test. Returns 0 if all pass, 1 otherwise.
 int RunSelfTest();
 
+// Sound-classification tests (--classifytest), no audio devices required.
+int RunClassifyTest();
+
 } // namespace sr

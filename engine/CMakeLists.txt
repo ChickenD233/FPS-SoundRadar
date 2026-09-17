@@ -9,6 +9,7 @@ add_executable(SoundRadar
     config.cpp
     wasapi_util.cpp
     selftest.cpp
+    classify.cpp
     measure.cpp
     tray.cpp
     simulate.cpp

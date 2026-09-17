@@ -137,6 +137,7 @@ bool LoadConfig(const std::wstring& path, AppConfig& cfg) {
     if (GetNumber(json, "radar_x", d)) cfg.overlay.offsetX = static_cast<int>(d);
     if (GetNumber(json, "radar_y", d)) cfg.overlay.offsetY = static_cast<int>(d);
     if (GetNumber(json, "radar_radius", d)) cfg.overlay.radius = static_cast<int>(d);
+    GetBool(json, "classify_enabled", cfg.classifyEnabled);
     return true;
 }
 
@@ -170,6 +171,7 @@ bool SaveConfig(const std::wstring& path, const AppConfig& cfg) {
     f << "  \"radar_x\": " << cfg.overlay.offsetX << ",\n";
     f << "  \"radar_y\": " << cfg.overlay.offsetY << ",\n";
     f << "  \"radar_radius\": " << cfg.overlay.radius << ",\n";
+    f << "  \"classify_enabled\": " << (cfg.classifyEnabled ? "true" : "false") << ",\n";
     f << "  \"autostart\": " << (cfg.autostart ? "true" : "false") << "\n";
     f << "}\n";
     return static_cast<bool>(f);

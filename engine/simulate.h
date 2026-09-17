@@ -31,7 +31,8 @@ private:
 
     SimScenario scenario_;
     SharedMeters* meters_;
-    HANDLE quitEvent_; // not owned
+    HANDLE quitEvent_; // not owned (global shutdown)
+    HANDLE stopEvent_; // owned: Stop() works without a global quit
     std::thread thread_;
     std::atomic<bool> silent_{false};
 };

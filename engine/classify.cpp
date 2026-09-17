@@ -1,0 +1,149 @@
+#include "classify.h"
+
+#include <cmath>
+#include <cstring>
+
+namespace sr {
+
+namespace {
+constexpr double kPi = 3.14159265358979323846;
+const float kLowBank[] = { 100.f, 150.f, 200.f, 250.f, 300.f };
+const float kHighBank[] = { 2000.f, 3000.f, 4000.f };
+}
+
+ChannelClassifier::ChannelClassifier(const ClassifyConfig& cfg) : cfg_(cfg) {}
+
+void ChannelClassifier::Reset() { *this = ChannelClassifier(cfg_); }
+
+float ChannelClassifier::GoertzelEnergy(float freq, const float* x, size_t n) const {
+    double w = 2.0 * kPi * freq / cfg_.sampleRate;
+    double cw = 2.0 * std::cos(w);
+    double s1 = 0.0, s2 = 0.0;
+    for (size_t i = 0; i < n; ++i) {
+        double s0 = static_cast<double>(x[i]) + cw * s1 - s2;
+        s2 = s1;
+        s1 = s0;
+    }
+    // normalized magnitude ~ sine amplitude at `freq`
+    double power = s1 * s1 + s2 * s2 - cw * s1 * s2;
+    return static_cast<float>(2.0 * std::sqrt(power < 0 ? 0 : power) / n);
+}
+
+void ChannelClassifier::Process(const float* x, size_t n) {
+    if (n == 0) return;
+    blockMs_ = static_cast<uint64_t>(n * 1000.0 / cfg_.sampleRate);
+
+    // block features
+    double sumSq = 0.0;
+    float peak = 0.0f;
+    for (size_t i = 0; i < n; ++i) {
+        float a = std::fabs(x[i]);
+        sumSq += static_cast<double>(x[i]) * x[i];
+        if (a > peak) peak = a;
+    }
+    float rms = static_cast<float>(std::sqrt(sumSq / n));
+    float crest = (rms > 1e-6f) ? peak / rms : 0.0f;
+
+    bool burstNow = rms >= cfg_.burstThreshold;
+    if (burstNow) {
+        float low = 0.0f, high = 0.0f;
+        for (float f : kLowBank) low += GoertzelEnergy(f, x, n);
+        for (float f : kHighBank) high += GoertzelEnergy(f, x, n);
+        // per-bin averages: the banks have different sizes, raw sums would
+        // bias the low/high comparison toward the larger bank
+        low /= sizeof(kLowBank) / sizeof(kLowBank[0]);
+        high /= sizeof(kHighBank) / sizeof(kHighBank[0]);
+        if (!inBurst_) {
+            inBurst_ = true;
+            sustained_ = false;
+            burstMs_ = 0.0f;
+            burstLow_ = burstHigh_ = 0.0f;
+            burstCrest_ = 0.0f;
+        }
+        burstMs_ += static_cast<float>(blockMs_);
+        burstLow_ += low;
+        burstHigh_ += high;
+        if (crest > burstCrest_) burstCrest_ = crest;
+        if (burstMs_ > cfg_.maxBurstMs) sustained_ = true;
+    } else if (inBurst_) {
+        inBurst_ = false;
+        OnBurstEnd();
+    }
+
+    // hold/expiry of the displayed classification
+    if (nowMs_ >= holdUntilMs_ && held_ != SoundNone) {
+        held_ = SoundNone;
+        confident_ = false;
+    }
+    nowMs_ += blockMs_;
+}
+
+void ChannelClassifier::OnBurstEnd() {
+    if (sustained_ || burstMs_ > cfg_.maxBurstMs) return;
+
+    bool lowDominant = burstLow_ > cfg_.lowDominantRatio * burstHigh_;
+    bool broadband = burstHigh_ > cfg_.broadbandRatio * burstLow_ &&
+                     burstCrest_ >= cfg_.minCrest;
+
+    if (lowDominant) {
+        // record burst end time in the sliding window ring
+        burstTimes_[burstCount_ % 16] = nowMs_;
+        ++burstCount_;
+
+        // count spacing-matched pairs inside the history window
+        int pairs = 0, inWindow = 0;
+        uint64_t lo = (nowMs_ > static_cast<uint64_t>(cfg_.historyMs))
+                          ? nowMs_ - static_cast<uint64_t>(cfg_.historyMs)
+                          : 0;
+        size_t n = burstCount_ < 16 ? burstCount_ : 16;
+        uint64_t times[16];
+        for (size_t i = 0; i < n; ++i) times[i] = burstTimes_[i];
+        // simple ascending sort of the ring contents
+        for (size_t i = 0; i < n; ++i)
+            for (size_t j = i + 1; j < n; ++j)
+                if (times[j] < times[i]) { uint64_t t = times[i]; times[i] = times[j]; times[j] = t; }
+        for (size_t i = 0; i < n; ++i) {
+            if (times[i] < lo) continue;
+            ++inWindow;
+            if (i > 0 && times[i - 1] >= lo) {
+                uint64_t gap = times[i] - times[i - 1];
+                if (gap >= static_cast<uint64_t>(cfg_.minSpacingMs) &&
+                    gap <= static_cast<uint64_t>(cfg_.maxSpacingMs))
+                    ++pairs;
+            }
+        }
+        if (pairs >= 2) Classify(SoundFootstep, pairs >= 2 && inWindow >= 3, nowMs_);
+    } else if (broadband) {
+        // one-shot: no low-band periodicity observed recently
+        Classify(SoundGunshot, burstCrest_ >= cfg_.minCrest * 1.2f, nowMs_);
+    }
+}
+
+void ChannelClassifier::Classify(SoundClass cls, bool confident, uint64_t nowMs) {
+    held_ = cls;
+    confident_ = confident;
+    holdUntilMs_ = nowMs + static_cast<uint64_t>(cfg_.holdMs);
+}
+
+// --- 8-channel wrapper -------------------------------------------------------
+
+Classifier8::Classifier8(const ClassifyConfig& cfg) {
+    for (int c = 0; c < 8; ++c) ch_[c] = ChannelClassifier(cfg);
+}
+
+void Classifier8::Reset() {
+    for (auto& c : ch_) c.Reset();
+}
+
+void Classifier8::Process(const float* in8, size_t frames) {
+    const size_t chunk = 4096;
+    for (size_t off = 0; off < frames; off += chunk) {
+        size_t n = (frames - off < chunk) ? frames - off : chunk;
+        for (int c = 0; c < 8; ++c) {
+            for (size_t f = 0; f < n; ++f) mono_[c][f] = in8[(off + f) * 8 + c];
+            ch_[c].Process(mono_[c], n);
+        }
+    }
+}
+
+} // namespace sr

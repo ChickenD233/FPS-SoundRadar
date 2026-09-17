@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "analysis.h"
+#include "classify.h"
 #include "config.h"
 #include "downmix.h"
 
@@ -252,6 +253,7 @@ void TestConfigRoundTrip() {
     a.overlay.highThreshold = 0.6f;
     a.overlay.radius = 120;
     a.autostart = true;
+    a.classifyEnabled = false;
 
     bool ok = SaveConfig(path, a);
     AppConfig b;
@@ -264,6 +266,7 @@ void TestConfigRoundTrip() {
     ok = ok && b.outputDevice == L"TestDevice";
     ok = ok && b.overlay.enabled == false && b.autostart == true;
     ok = ok && std::fabs(b.overlay.highThreshold - 0.6f) < 1e-4f && b.overlay.radius == 120;
+    ok = ok && b.classifyEnabled == false;
     DeleteFileW(path.c_str());
     Report("config save/load round-trip", ok);
 }
@@ -279,6 +282,67 @@ int RunSelfTest() {
     TestFadeTiming();
     TestStereoDownmix();
     TestConfigRoundTrip();
+    std::printf("\n%s (%d failure%s)\n", g_failures == 0 ? "ALL TESTS PASSED" : "TESTS FAILED",
+                g_failures, g_failures == 1 ? "" : "s");
+    return g_failures == 0 ? 0 : 1;
+}
+
+// --- classification tests ----------------------------------------------------
+
+namespace {
+
+// Deterministic white noise (LCG), amplitude +-amp.
+void AddNoise(float* dst, size_t frames, int ch, size_t start, double amp, uint32_t& seed) {
+    for (size_t f = 0; f < frames; ++f) {
+        seed = seed * 1664525u + 1013904223u;
+        double u = (static_cast<double>(seed >> 8) / 16777216.0) * 2.0 - 1.0;
+        dst[(start + f) * kChannels + ch] = static_cast<float>(amp * u);
+    }
+}
+
+void AddSine(float* dst, size_t frames, int ch, size_t start, double freq, double amp) {
+    for (size_t f = 0; f < frames; ++f) {
+        double t = static_cast<double>(start + f) / kFs;
+        dst[(start + f) * kChannels + ch] +=
+            static_cast<float>(amp * std::sin(2.0 * kPi * freq * t));
+    }
+}
+
+// One combined buffer proves per-channel independence:
+//   ch0: 3x 100 ms 150 Hz bursts at 2 Hz   -> FOOTSTEP
+//   ch2: continuous 1 kHz tone             -> NONE (sustained)
+//   ch5: single 5 ms white-noise click     -> GUNSHOT
+void TestClassification() {
+    const size_t total = 76800; // 1.6 s
+    std::vector<float> buf(total * kChannels, 0.0f);
+    const size_t ms = 48; // frames per ms
+
+    AddSine(buf.data(), 100 * ms, 0, 0, 150.0, 0.6);
+    AddSine(buf.data(), 100 * ms, 0, 500 * ms, 150.0, 0.6);
+    AddSine(buf.data(), 100 * ms, 0, 1000 * ms, 150.0, 0.6);
+    AddSine(buf.data(), 1600 * ms, 2, 0, 1000.0, 0.3);
+    uint32_t seed = 12345;
+    AddNoise(buf.data(), 5 * ms, 5, 1200 * ms, 0.9, seed);
+
+    Classifier8 clf;
+    for (size_t off = 0; off < total; off += 480)
+        clf.Process(buf.data() + off * kChannels, 480);
+
+    SoundClass c0 = clf.ClassOf(0), c2 = clf.ClassOf(2), c5 = clf.ClassOf(5);
+    bool ok = c0 == SoundFootstep && c2 == SoundNone && c5 == SoundGunshot;
+    for (int c : { 1, 3, 4, 6, 7 }) ok = ok && clf.ClassOf(c) == SoundNone;
+    std::printf("       ch0(footstep)=%d conf=%d  ch2(tone)=%d  ch5(click)=%d conf=%d\n",
+                (int)c0, clf.Confident(0) ? 1 : 0, (int)c2, (int)c5,
+                clf.Confident(5) ? 1 : 0);
+    Report("classify: footstep / sustained tone / click, per-channel", ok);
+}
+
+} // namespace
+
+int RunClassifyTest() {
+    std::printf("SoundRadar classification test (experimental, no audio devices)\n\n");
+    g_failures = 0;
+    TestClassification();
     std::printf("\n%s (%d failure%s)\n", g_failures == 0 ? "ALL TESTS PASSED" : "TESTS FAILED",
                 g_failures, g_failures == 1 ? "" : "s");
     return g_failures == 0 ? 0 : 1;

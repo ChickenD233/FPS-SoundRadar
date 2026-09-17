@@ -55,9 +55,10 @@ private:
     std::atomic<uint64_t> idleCpu_{0}, idleWall_{0};
 };
 
-// Renders one overlay frame (dual-style levels supplied by caller) into a BMP
-// via a D2D WIC render target. Independent of the window/swapchain path.
+// Renders one overlay frame (levels + optional SoundClass per channel) into a
+// BMP via a D2D WIC render target. Independent of the window/swapchain path.
 bool RenderSceneToFile(const std::wstring& path, int width, int height,
-                       const float levels[8], const OverlayConfig& cfg);
+                       const float levels[8], const uint8_t* classes,
+                       const OverlayConfig& cfg);
 
 } // namespace sr

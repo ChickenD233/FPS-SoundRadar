@@ -62,6 +62,9 @@ struct SceneResources {
     ComPtr<ID2D1PathGeometry> sector[8];    // only non-LFE channels
     D2D1_POINT_2F labelPos[8];
     ComPtr<IDWriteTextLayout> labelLayout[8];
+    ComPtr<IDWriteTextLayout> fsLayout;     // "FS" footstep marker
+    ComPtr<IDWriteTextLayout> gsLayout;     // "GS" gunshot marker
+    ComPtr<IDWriteTextLayout> cornerLayout; // "实验性 Experimental"
 };
 
 ComPtr<ID2D1PathGeometry> MakeSector(ID2D1Factory* factory, float cx, float cy,
@@ -123,7 +126,20 @@ HRESULT CreateSceneResources(ID2D1Factory* d2dFactory, IDWriteFactory* dwFactory
         res.labelPos[c] = D2D1::Point2F(cx + r * 0.58f * d.x - m.width / 2,
                                         cy + r * 0.58f * d.y - m.height / 2);
     }
-    return S_OK;
+    // classification markers
+    hr = dwFactory->CreateTextLayout(L"FS", 2, fmt.Get(), 48.0f, 24.0f, &res.fsLayout);
+    if (FAILED(hr)) return hr;
+    hr = dwFactory->CreateTextLayout(L"GS", 2, fmt.Get(), 48.0f, 24.0f, &res.gsLayout);
+    if (FAILED(hr)) return hr;
+    ComPtr<IDWriteTextFormat> cornerFmt;
+    hr = dwFactory->CreateTextFormat(L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_NORMAL,
+                                     DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL,
+                                     12.0f, L"zh-cn", &cornerFmt);
+    if (FAILED(hr)) return hr;
+    const wchar_t* corner = L"实验性 Experimental";
+    hr = dwFactory->CreateTextLayout(corner, static_cast<UINT32>(wcslen(corner)),
+                                     cornerFmt.Get(), 260.0f, 24.0f, &res.cornerLayout);
+    return hr;
 }
 
 void DrawBand(ID2D1RenderTarget* rt, const SceneResources& res, const OverlayConfig& cfg,
@@ -142,7 +158,8 @@ void DrawBand(ID2D1RenderTarget* rt, const SceneResources& res, const OverlayCon
 }
 
 void DrawScene(ID2D1RenderTarget* rt, const SceneResources& res, const OverlayConfig& cfg,
-               const float levels[8], int w, int h) {
+               const float levels[8], const uint8_t* classes, bool classifyOn,
+               int w, int h) {
     float cx = w * 0.5f + static_cast<float>(cfg.offsetX);
     float cy = h * 0.5f + static_cast<float>(cfg.offsetY);
     float r = static_cast<float>(cfg.radius);
@@ -172,6 +189,42 @@ void DrawScene(ID2D1RenderTarget* rt, const SceneResources& res, const OverlayCo
         float a = 0.35f + 0.55f * (levels[c] > 1.0f ? 1.0f : levels[c]);
         res.textBrush->SetColor(D2D1::ColorF(1, 1, 1, a));
         rt->DrawTextLayout(res.labelPos[c], res.labelLayout[c].Get(), res.textBrush.Get());
+    }
+
+    // experimental classification markers: amber FS outline, red GS flash
+    if (classifyOn && classes) {
+        for (int c = 0; c < 8; ++c) {
+            uint8_t cls = classes[c];
+            if (cls == SoundNone) continue;
+            D2D1_POINT_2F mp = D2D1::Point2F(res.labelPos[c].x, res.labelPos[c].y + 16.0f);
+            if (cls == SoundFootstep) {
+                res.brush->SetColor(D2D1::ColorF(1.0f, 0.6f, 0.1f, 0.95f));
+                if (res.sector[c])
+                    rt->DrawGeometry(res.sector[c].Get(), res.brush.Get(), 2.0f);
+                else // LFE: ring around the center circle
+                    rt->DrawEllipse(D2D1::Ellipse(D2D1::Point2F(cx, cy), 30.0f, 30.0f),
+                                    res.brush.Get(), 2.0f);
+                res.textBrush->SetColor(D2D1::ColorF(1.0f, 0.6f, 0.1f, 0.95f));
+                rt->DrawTextLayout(mp, res.fsLayout.Get(), res.textBrush.Get());
+            } else if (cls == SoundGunshot) {
+                res.brush->SetColor(D2D1::ColorF(1.0f, 0.1f, 0.1f, 0.55f));
+                if (res.sector[c]) {
+                    rt->FillGeometry(res.sector[c].Get(), res.brush.Get()); // red flash
+                    res.brush->SetColor(D2D1::ColorF(1.0f, 0.1f, 0.1f, 0.95f));
+                    rt->DrawGeometry(res.sector[c].Get(), res.brush.Get(), 3.0f);
+                } else {
+                    res.brush->SetColor(D2D1::ColorF(1.0f, 0.1f, 0.1f, 0.7f));
+                    rt->FillEllipse(D2D1::Ellipse(D2D1::Point2F(cx, cy), 26.0f, 26.0f),
+                                    res.brush.Get());
+                }
+                res.textBrush->SetColor(D2D1::ColorF(1.0f, 0.2f, 0.1f, 0.95f));
+                rt->DrawTextLayout(mp, res.gsLayout.Get(), res.textBrush.Get());
+            }
+        }
+        // corner disclaimer while classification display is on
+        res.textBrush->SetColor(D2D1::ColorF(1, 1, 1, 0.45f));
+        rt->DrawTextLayout(D2D1::Point2F(8.0f, static_cast<float>(h) - 26.0f),
+                           res.cornerLayout.Get(), res.textBrush.Get());
     }
 
     // edge bands
@@ -278,7 +331,6 @@ void Overlay::ResetStats() {
 
 void Overlay::ThreadMain() {
     running_.store(true);
-    fwprintf(stderr, L"overlay: thread started\n");
     ComInit com;
     if (!com.Ok()) {
         fwprintf(stderr, L"overlay: COM init failed\n");
@@ -309,17 +361,15 @@ void Overlay::ThreadMain() {
         running_.store(false);
         return;
     }
-    ShowWindow(hwnd, SW_SHOWNA); // never takes focus
+    // Never visible: created without WS_VISIBLE and never shown. All visual
+    // verification goes through --simulate-screenshot (WIC/BMP), not the screen.
     hwnd_.store(hwnd);
-    fwprintf(stderr, L"overlay: window created\n");
 
     // --- D3D11 -> DXGI -> D2D device context -------------------------------
     ComPtr<ID3D11Device> d3d;
-    fwprintf(stderr, L"overlay: D3D11CreateDevice...\n");
     HRESULT hr = D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr,
                                    D3D11_CREATE_DEVICE_BGRA_SUPPORT, nullptr, 0,
                                    D3D11_SDK_VERSION, &d3d, nullptr, nullptr);
-    fwprintf(stderr, L"overlay: D3D11CreateDevice hw hr=0x%08lx\n", (unsigned long)hr);
     if (FAILED(hr)) {
         hr = D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_WARP, nullptr,
                                D3D11_CREATE_DEVICE_BGRA_SUPPORT, nullptr, 0,
@@ -366,11 +416,9 @@ void Overlay::ThreadMain() {
         hr = factory2 ? factory2->CreateSwapChainForComposition(d3d.Get(), &desc, nullptr,
                                                                 &swapchain)
                       : E_FAIL;
-        fwprintf(stderr, L"overlay: swapchain hr=0x%08lx\n", (unsigned long)hr);
     }
     if (SUCCEEDED(hr))
         hr = DCompositionCreateDevice(dxgiDevice.Get(), IID_PPV_ARGS(&dcompDevice));
-    fwprintf(stderr, L"overlay: dcomp device hr=0x%08lx\n", (unsigned long)hr);
     if (SUCCEEDED(hr)) hr = dcompDevice->CreateTargetForHwnd(hwnd, TRUE, &dcompTarget);
     if (SUCCEEDED(hr)) hr = dcompDevice->CreateVisual(&dcompVisual);
     if (SUCCEEDED(hr)) hr = dcompVisual->SetContent(swapchain.Get());
@@ -379,8 +427,6 @@ void Overlay::ThreadMain() {
     if (SUCCEEDED(hr))
         hr = CreateSceneResources(d2dFactory.Get(), dwFactory.Get(), dc.Get(), cfg_, w, h, res);
     initOk = SUCCEEDED(hr);
-    fwprintf(stderr, L"overlay: init %s (hr=0x%08lx)\n", initOk ? L"ok" : L"failed",
-             (unsigned long)hr);
     if (!initOk)
         fwprintf(stderr, L"overlay: device init failed (hr=0x%08lx)\n",
                  static_cast<unsigned long>(hr));
@@ -393,20 +439,23 @@ void Overlay::ThreadMain() {
         while (PeekMessageW(&msg, hwnd, 0, 0, PM_REMOVE)) DispatchMessageW(&msg);
 
         AnalysisFrame frame;
+        uint8_t classes[8] = {};
         {
             std::lock_guard<std::mutex> lk(meters_->mu);
             frame = meters_->frame;
+            std::memcpy(classes, meters_->classes, sizeof(classes));
         }
         float maxLvl = 0.0f;
         for (int c = 0; c < 8; ++c) if (frame.level[c] > maxLvl) maxLvl = frame.level[c];
         bool active = frame.active || maxLvl > 0.02f;
 
+        // measure the whole iteration (sleep included) for a true loop CPU%
+        CpuProbe probe;
+        probe.Begin();
         DWORD timeout = active ? 16 : 250; // 60 fps / 4 fps
         DWORD wr = WaitForMultipleObjects(2, waits, FALSE, timeout);
         if (wr != WAIT_TIMEOUT) break; // quit or stop
 
-        CpuProbe probe;
-        probe.Begin();
         if (active) {
             ComPtr<IDXGISurface> surface;
             HRESULT fhr = swapchain->GetBuffer(0, IID_PPV_ARGS(&surface));
@@ -422,11 +471,15 @@ void Overlay::ThreadMain() {
                 dc->SetTarget(target.Get());
                 dc->BeginDraw();
                 dc->Clear(D2D1::ColorF(0, 0, 0, 0)); // fully transparent base
-                DrawScene(dc.Get(), res, cfg_, frame.level, w, h);
+                DrawScene(dc.Get(), res, cfg_, frame.level, classes,
+                          g_classifyEnabled.load(), w, h);
                 fhr = dc->EndDraw();
                 dc->SetTarget(nullptr);
             }
-            if (SUCCEEDED(fhr)) fhr = swapchain->Present(0, 0);
+            // DO_NOT_WAIT: the window is hidden, so DWM never consumes frames;
+            // a blocking Present would deadlock once the flip queue fills.
+            if (SUCCEEDED(fhr)) fhr = swapchain->Present(0, DXGI_PRESENT_DO_NOT_WAIT);
+            if (fhr == DXGI_ERROR_WAS_STILL_DRAWING) fhr = S_OK; // dropped frame, fine
             if (SUCCEEDED(fhr)) fhr = dcompDevice->Commit();
             if (fhr == D2DERR_RECREATE_TARGET || fhr == DXGI_ERROR_DEVICE_REMOVED ||
                 fhr == DXGI_ERROR_DEVICE_RESET) {
@@ -456,7 +509,8 @@ void Overlay::ThreadMain() {
 // --- WIC screenshot path -----------------------------------------------------
 
 bool RenderSceneToFile(const std::wstring& path, int width, int height,
-                       const float levels[8], const OverlayConfig& cfg) {
+                       const float levels[8], const uint8_t* classes,
+                       const OverlayConfig& cfg) {
     ComInit com;
     if (!com.Ok()) return false;
 
@@ -491,7 +545,7 @@ bool RenderSceneToFile(const std::wstring& path, int width, int height,
     if (SUCCEEDED(hr)) {
         rt->BeginDraw();
         rt->Clear(D2D1::ColorF(0.06f, 0.06f, 0.09f, 1.0f)); // opaque dark backdrop
-        DrawScene(rt.Get(), res, cfg, levels, width, height);
+        DrawScene(rt.Get(), res, cfg, levels, classes, classes != nullptr, width, height);
         hr = rt->EndDraw();
     }
     if (FAILED(hr)) return false;
