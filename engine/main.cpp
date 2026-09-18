@@ -169,8 +169,12 @@ struct Pipeline {
                 exclusive ? "exclusive" : "shared");
 
         ring_ = std::make_unique<sr::RingBuffer>(8192);
-        analyzer_ = std::make_unique<sr::Analyzer>(cfg.analysis);
-        classifier_ = std::make_unique<sr::Classifier8>();
+        sr::AnalysisConfig acfg = cfg.analysis;
+        acfg.sampleRate = static_cast<float>(cap_->GetFormat().sampleRate);
+        analyzer_ = std::make_unique<sr::Analyzer>(acfg);
+        sr::ClassifyConfig ccfg;
+        ccfg.sampleRate = static_cast<float>(cap_->GetFormat().sampleRate);
+        classifier_ = std::make_unique<sr::Classifier8>(ccfg);
         meters_ = meters;
         stopEvent_ = CreateEventW(nullptr, TRUE, FALSE, nullptr);
         running = true;
@@ -964,6 +968,7 @@ int RunDiag(sr::AppConfig& cfg) {
     std::printf("capture: %s (%u Hz, %u ch, buffer %.1f ms)\n",
                 sr::ToUtf8(cap.DeviceName()).c_str(), f.sampleRate, f.channels,
                 f.bufferFrames * 1000.0 / f.sampleRate);
+    cap.ProbeChannelCounts();
     std::printf("listening 10 s (no audio output). Play a video or the game now...\n");
 
     float maxLv[8] = {};

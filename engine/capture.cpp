@@ -15,10 +15,10 @@ namespace sr {
 
 static const wchar_t* kInstallHint =
     L"No matching capture endpoint found.\n"
-    L"Either install the SoundRadar VAD driver (see driver/ in this repo) - the capture\n"
-    L"device name then contains \"SoundRadar\" and \"Loopback\" - or use the free\n"
-    L"Voicemeeter Potato path: route game audio to the Voicemeeter Input as 7.1 and\n"
-    L"patch the bus to B1; SoundRadar then captures \"Voicemeeter Out B1\".\n"
+    L"Free path: install VB-CABLE (vb-audio.com), set the game output to\n"
+    L"\"CABLE In 16 Ch\" configured as 7.1; SoundRadar captures \"CABLE Output\" (8ch).\n"
+    L"Or install the SoundRadar VAD driver (see driver/ in this repo) - the capture\n"
+    L"device name then contains \"SoundRadar\" and \"Loopback\".\n"
     L"A custom substring can be set via capture_device in config.json.\n"
     L"Check: Settings > System > Sound > Recording.";
 
@@ -193,6 +193,37 @@ void CaptureClient::Run(const Sink& sink, HANDLE quitEvent) {
 
     client_->Stop();
     if (mmcss) AvRevertMmThreadCharacteristics(mmcss);
+}
+
+void CaptureClient::ProbeChannelCounts() {
+    if (!client_) return;
+    std::printf("supported formats on this endpoint (shared mode):\n");
+    for (uint32_t ch : {2u, 6u, 8u}) {
+        for (int kind = 0; kind < 2; ++kind) {
+            WAVEFORMATEXTENSIBLE w = {};
+            w.Format.wFormatTag = WAVE_FORMAT_EXTENSIBLE;
+            w.Format.nChannels = static_cast<WORD>(ch);
+            w.Format.nSamplesPerSec = 48000;
+            w.Format.wBitsPerSample = static_cast<WORD>(kind == 0 ? 32 : 16);
+            w.Format.nBlockAlign = w.Format.nChannels * w.Format.wBitsPerSample / 8;
+            w.Format.nAvgBytesPerSec = w.Format.nSamplesPerSec * w.Format.nBlockAlign;
+            w.Format.cbSize = 22;
+            w.Samples.wValidBitsPerSample = w.Format.wBitsPerSample;
+            w.SubFormat = kind == 0 ? KSDATAFORMAT_SUBTYPE_IEEE_FLOAT : KSDATAFORMAT_SUBTYPE_PCM;
+            w.dwChannelMask = ch == 8 ? 0x63F : (ch == 6 ? 0x3F : 0x3);
+            WAVEFORMATEX* closest = nullptr;
+            HRESULT hr = client_->IsFormatSupported(AUDCLNT_SHAREMODE_SHARED,
+                                                    reinterpret_cast<WAVEFORMATEX*>(&w), &closest);
+            std::printf("  %u ch %u bit: %s", ch, w.Format.wBitsPerSample,
+                        hr == S_OK ? "YES" : (hr == S_FALSE ? "closest-only" : "NO"));
+            if (closest) {
+                std::printf("  (closest: %u ch %u Hz %u bit)", closest->nChannels,
+                            closest->nSamplesPerSec, closest->wBitsPerSample);
+                CoTaskMemFree(closest);
+            }
+            std::printf("\n");
+        }
+    }
 }
 
 } // namespace sr
