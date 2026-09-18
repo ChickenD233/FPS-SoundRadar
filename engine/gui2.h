@@ -64,6 +64,7 @@ private:
     void PushState();                 // C++ -> JS full state
     void OnBridgeMessage(const wchar_t* json); // JS -> C++
     void ApplyFromJson(const std::string& json, int selIn, int selOut);
+    void MeasureAndFit(); // size the frameless window to the page content
 
     Hooks hooks_;
     HWND hwnd_ = nullptr;
