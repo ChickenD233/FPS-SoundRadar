@@ -170,6 +170,53 @@ public:
 
     const std::vector<Arrow>& Arrows() const { return arrows_; }
 
+    // Stereo input (srcChannels == 2): one indicator sweeping the front.
+    // pan = (R-L)/(L+R) -> angle = pan * 90 deg, smoothed like the clusters.
+    void UpdateStereo(float lvlL, float lvlR, float dt) {
+        float smoothA = 1.0f - std::exp(-dt / 0.08f); // 80 ms glide
+        float sum = lvlL + lvlR;
+        if (sum < 0.05f) { // fade out
+            for (size_t k = 0; k < arrows_.size();) {
+                arrows_[k].age += dt;
+                arrows_[k].strength *= std::exp(-dt / 0.15f);
+                if (arrows_[k].strength < 0.02f) {
+                    arrows_.erase(arrows_.begin() + k);
+                    continue;
+                }
+                ++k;
+            }
+            return;
+        }
+        float pan = (lvlR - lvlL) / sum; // -1..+1
+        float target = pan * 90.0f;
+        float energy = sum * 0.5f;
+        if (arrows_.empty()) {
+            Arrow a;
+            a.angle = a.trail0 = a.trail1 = target;
+            a.strength = energy;
+            a.pulse = 0.001f;
+            a.matched = true;
+            arrows_.push_back(a);
+            return;
+        }
+        if (arrows_.size() > 1) arrows_.resize(1); // stereo = one indicator
+        Arrow& ar = arrows_[0];
+        ar.matched = true;
+        ar.trail1 = ar.trail0;
+        ar.trail0 = ar.angle;
+        ar.age += dt;
+        ar.angle += ShortestDelta(target, ar.angle) * smoothA;
+        ar.strength += (energy - ar.strength) * smoothA;
+        if (ar.pulse > 0.0f) {
+            ar.pulse += dt / 0.15f;
+            if (ar.pulse >= 1.0f) ar.pulse = 0.0f;
+        }
+    }
+
+    static float ShortestDelta(float a, float b) { // a-b in -180..180
+        return std::fmod(a - b + 540.0f, 360.0f) - 180.0f;
+    }
+
 private:
     std::vector<Arrow> arrows_;
 };
@@ -285,32 +332,83 @@ HRESULT CreateSceneResources(ID2D1Factory* d2dFactory, IDWriteFactory* dwFactory
     return hr;
 }
 
-// Edge band as a 5-slice sideways-fading strip with a soft glow pass.
-void DrawBand(ID2D1RenderTarget* rt, const SceneResources& res, const OverlayConfig& cfg,
-              float lvl, const D2D1_RECT_F& span, int edge /*0=top 1=right 2=bottom 3=left*/,
-              float fx) {
-    if (lvl <= 0.02f) return; // zero level = invisible
-    const float profile[5] = { 0.20f, 0.55f, 1.0f, 0.55f, 0.20f };
-    float t = 5.0f + 18.0f * (lvl > 1.0f ? 1.0f : lvl); // thin base, grows with level
+// Directional capsule on the screen border: project the tracked angle onto
+// the rounded-rect border (inset 10 px), draw a short glowing segment there,
+// tangent to the border. Slides along the edge as the angle moves.
+void DrawCapsule(ID2D1RenderTarget* rt, const SceneResources& res,
+                 const OverlayConfig& cfg, float angleDeg, float lvl, int w, int h,
+                 float fx) {
+    float cx = w * 0.5f + static_cast<float>(cfg.offsetX);
+    float cy = h * 0.5f + static_cast<float>(cfg.offsetY);
+    float rad = angleDeg * kPi / 180.0f;
+    float dx = std::sin(rad), dy = -std::cos(rad); // y down
+
+    // ray -> border rect intersection
+    const float inset = 10.0f;
+    float left = inset, top = inset, right = w - inset, bottom = h - inset;
+    float tBest = 1e9f;
+    int edge = -1;
+    if (dx > 1e-4f) { float t = (right - cx) / dx; if (t < tBest) { tBest = t; edge = 1; } }
+    if (dx < -1e-4f) { float t = (left - cx) / dx; if (t < tBest) { tBest = t; edge = 3; } }
+    if (dy > 1e-4f) { float t = (bottom - cy) / dy; if (t < tBest) { tBest = t; edge = 2; } }
+    if (dy < -1e-4f) { float t = (top - cy) / dy; if (t < tBest) { tBest = t; edge = 0; } }
+    if (edge < 0) return;
+    float hx = cx + tBest * dx, hy = cy + tBest * dy;
     bool horiz = (edge == 0 || edge == 2);
-    float lo = horiz ? span.left : span.top;
-    float hi = horiz ? span.right : span.bottom;
-    float len = hi - lo;
-    for (int pass = 0; pass < 2; ++pass) {
-        float tPass = (pass == 0) ? t + 8.0f * fx : t; // pass 0 = glow
-        float aMul = (pass == 0) ? 0.30f * fx : 0.85f;
-        if (aMul <= 0.0f) continue;
-        for (int i = 0; i < 5; ++i) {
-            float a0 = lo + len * i / 5.0f, a1 = lo + len * (i + 1) / 5.0f;
-            D2D1_RECT_F r;
-            switch (edge) {
-                case 0: r = D2D1::RectF(a0, span.top, a1, span.top + tPass); break;
-                case 1: r = D2D1::RectF(span.right - tPass, a0, span.right, a1); break;
-                case 2: r = D2D1::RectF(a0, span.bottom - tPass, a1, span.bottom); break;
-                default: r = D2D1::RectF(span.left, a0, span.left + tPass, a1); break;
-            }
-            res.brush->SetColor(NeonColor(lvl, cfg, profile[i] * aMul));
-            rt->FillRectangle(&r, res.brush.Get());
+    float tx = horiz ? 1.0f : 0.0f, ty = horiz ? 0.0f : 1.0f; // tangent along border
+
+    float len = 120.0f * (0.35f + 0.65f * lvl); // ~120 px scaled by level
+    float thick = 6.0f;
+    D2D1_COLOR_F col = NeonColor(lvl, cfg);
+
+    auto seg = [&](float halfLen, float t, float alphaMul) {
+        ComPtr<ID2D1PathGeometry> geo;
+        if (FAILED(res.factory->CreatePathGeometry(&geo))) return;
+        ComPtr<ID2D1GeometrySink> sink;
+        if (FAILED(geo->Open(&sink))) return;
+        sink->BeginFigure(D2D1::Point2F(hx - tx * halfLen, hy - ty * halfLen),
+                          D2D1_FIGURE_BEGIN_HOLLOW);
+        sink->AddLine(D2D1::Point2F(hx + tx * halfLen, hy + ty * halfLen));
+        sink->EndFigure(D2D1_FIGURE_END_OPEN);
+        sink->Close();
+        res.brush->SetColor(NeonColor(lvl, cfg, alphaMul));
+        rt->DrawGeometry(geo.Get(), res.brush.Get(), t, res.roundCaps.Get());
+    };
+
+    if (fx > 0.0f) seg(len * 0.5f, thick + 10.0f * fx, 0.22f * fx); // glow
+    // main capsule: gradient dim->bright along its length
+    ComPtr<ID2D1PathGeometry> geo;
+    if (SUCCEEDED(res.factory->CreatePathGeometry(&geo))) {
+        ComPtr<ID2D1GeometrySink> sink;
+        if (SUCCEEDED(geo->Open(&sink))) {
+            sink->BeginFigure(D2D1::Point2F(hx - tx * len * 0.5f, hy - ty * len * 0.5f),
+                              D2D1_FIGURE_BEGIN_HOLLOW);
+            sink->AddLine(D2D1::Point2F(hx + tx * len * 0.5f, hy + ty * len * 0.5f));
+            sink->EndFigure(D2D1_FIGURE_END_OPEN);
+            sink->Close();
+        }
+        D2D1_COLOR_F dim = col, bright = col;
+        dim.r *= 0.50f; dim.g *= 0.50f; dim.b *= 0.50f;
+        bright.r += (1.0f - bright.r) * 0.25f;
+        bright.g += (1.0f - bright.g) * 0.25f;
+        bright.b += (1.0f - bright.b) * 0.25f;
+        D2D1_GRADIENT_STOP stops[2];
+        stops[0].position = 0.0f; stops[0].color = dim;
+        stops[1].position = 1.0f; stops[1].color = bright;
+        ComPtr<ID2D1GradientStopCollection> gsc;
+        rt->CreateGradientStopCollection(stops, 2, &gsc);
+        ComPtr<ID2D1LinearGradientBrush> grad;
+        if (gsc)
+            rt->CreateLinearGradientBrush(
+                D2D1::LinearGradientBrushProperties(
+                    D2D1::Point2F(hx - tx * len * 0.5f, hy - ty * len * 0.5f),
+                    D2D1::Point2F(hx + tx * len * 0.5f, hy + ty * len * 0.5f)),
+                gsc.Get(), &grad);
+        if (grad)
+            rt->DrawGeometry(geo.Get(), grad.Get(), thick, res.roundCaps.Get());
+        else {
+            res.brush->SetColor(col);
+            rt->DrawGeometry(geo.Get(), res.brush.Get(), thick, res.roundCaps.Get());
         }
     }
 }
@@ -325,6 +423,7 @@ void DrawScene(ID2D1RenderTarget* rt, const SceneResources& res, const OverlayCo
     float cy = h * 0.5f + static_cast<float>(cfg.offsetY);
     float r = static_cast<float>(cfg.radius);
     float fx = cfg.fxPct / 100.0f;
+    (void)levels; // everything direction-related reads the tracked clusters now
 
     for (const auto& a : arrows) {
         if (a.strength <= 0.02f) continue;
@@ -462,19 +561,11 @@ void DrawScene(ID2D1RenderTarget* rt, const SceneResources& res, const OverlayCo
                            res.cornerLayout.Get(), res.textBrush.Get());
     }
 
-    // edge bands (thin, same neon grading)
-    float W = static_cast<float>(w), H = static_cast<float>(h);
-    DrawBand(rt, res, cfg, levels[0], D2D1::RectF(0, 0, W / 3, 0), 0, fx);          // top FL
-    DrawBand(rt, res, cfg, levels[2], D2D1::RectF(W / 3, 0, 2 * W / 3, 0), 0, fx);  // top C
-    DrawBand(rt, res, cfg, levels[1], D2D1::RectF(2 * W / 3, 0, W, 0), 0, fx);      // top FR
-    DrawBand(rt, res, cfg, levels[1], D2D1::RectF(W, 0, W, H / 3), 1, fx);          // right FR
-    DrawBand(rt, res, cfg, levels[7], D2D1::RectF(W, H / 3, W, 2 * H / 3), 1, fx);  // right SR
-    DrawBand(rt, res, cfg, levels[5], D2D1::RectF(W, 2 * H / 3, W, H), 1, fx);      // right BR
-    DrawBand(rt, res, cfg, levels[4], D2D1::RectF(0, H, W / 2, H), 2, fx);          // bottom BL
-    DrawBand(rt, res, cfg, levels[5], D2D1::RectF(W / 2, H, W, H), 2, fx);          // bottom BR
-    DrawBand(rt, res, cfg, levels[0], D2D1::RectF(0, 0, 0, H / 3), 3, fx);          // left FL
-    DrawBand(rt, res, cfg, levels[6], D2D1::RectF(0, H / 3, 0, 2 * H / 3), 3, fx);  // left SL
-    DrawBand(rt, res, cfg, levels[4], D2D1::RectF(0, 2 * H / 3, 0, H), 3, fx);      // left BL
+    // edge capsules: one sliding border segment per tracked cluster
+    for (const auto& a : arrows) {
+        if (a.strength <= 0.02f) continue;
+        DrawCapsule(rt, res, cfg, a.angle, a.strength, w, h, fx);
+    }
 }
 
 const wchar_t* kWndClass = L"SoundRadarOverlay";
@@ -702,10 +793,12 @@ void Overlay::ThreadMain(bool visible) {
 
         AnalysisFrame frame;
         uint8_t classes[8] = {};
+        uint32_t srcCh = 8;
         {
             std::lock_guard<std::mutex> lk(meters_->mu);
             frame = meters_->frame;
             std::memcpy(classes, meters_->classes, sizeof(classes));
+            srcCh = meters_->srcChannels;
         }
         float maxLvl = 0.0f;
         for (int c = 0; c < 8; ++c) if (frame.level[c] > maxLvl) maxLvl = frame.level[c];
@@ -715,7 +808,11 @@ void Overlay::ThreadMain(bool visible) {
         uint64_t nowTick = GetTickCount64();
         float dt = static_cast<float>(nowTick - lastTick) / 1000.0f;
         lastTick = nowTick;
-        if (active) {
+        if (srcCh == 2) {
+            // stereo input: pan sweeps one indicator across the front
+            if (active) tracker.UpdateStereo(frame.level[0], frame.level[1], dt);
+            else tracker.UpdateStereo(0.0f, 0.0f, dt); // fade out
+        } else if (active) {
             tracker.Update(frame.level, 0.05f, dt);
         } else {
             float zeros[8] = {};
