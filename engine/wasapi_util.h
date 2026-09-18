@@ -12,10 +12,11 @@
 
 namespace sr {
 
-// RAII COM init for the current thread (MTA is fine for WASAPI).
+// RAII COM init for the current thread. STA: WebView2 requires it, and WASAPI
+// interfaces are free-threaded so the audio threads are unaffected.
 struct ComInit {
     HRESULT hr;
-    ComInit() : hr(CoInitializeEx(nullptr, COINIT_MULTITHREADED)) {}
+    ComInit() : hr(CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED)) {}
     ~ComInit() { if (SUCCEEDED(hr)) CoUninitialize(); }
     bool Ok() const { return SUCCEEDED(hr); }
 };

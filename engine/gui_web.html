@@ -1,0 +1,323 @@
+<!DOCTYPE html>
+<html lang="zh-cn">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SoundRadar 声纹雷达</title>
+<style>
+:root {
+  --bg: #0f1117;
+  --card: #1a1e28;
+  --card2: #14181f;
+  --accent: #00d2c8;
+  --accent-dim: rgba(0, 210, 200, .35);
+  --text: #d8dce6;
+  --dim: #8a90a0;
+  --danger: #e06060;
+  --ok: #3fd97c;
+  --warn: #e8b93f;
+  --err: #e05050;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { height: 100%; }
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: "Microsoft YaHei UI", "Segoe UI", sans-serif;
+  font-size: 13px;
+  padding: 14px 16px 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  user-select: none;
+}
+header {
+  display: flex; align-items: baseline; gap: 10px;
+  padding: 0 4px 8px;
+}
+header h1 {
+  font-size: 18px; font-weight: 600; letter-spacing: .5px;
+  color: var(--accent);
+  text-shadow: 0 0 14px var(--accent-dim);
+}
+header .sub { color: var(--dim); font-size: 11px; }
+.card {
+  background: var(--card);
+  border-radius: 12px;
+  padding: 10px 14px 12px;
+  margin-bottom: 10px;
+  box-shadow: 0 2px 12px rgba(0,0,0,.35);
+}
+.card h2 {
+  font-size: 11px; font-weight: 600; letter-spacing: 1.5px;
+  color: var(--accent); margin-bottom: 10px;
+  display: flex; align-items: center; gap: 8px;
+}
+.card h2::after { content: ""; flex: 1; height: 1px; background: rgba(0,210,200,.18); }
+.row { display: flex; align-items: center; gap: 10px; margin: 6px 0; }
+.row label { width: 96px; color: var(--dim); flex: none; }
+.row .val { width: 64px; text-align: right; color: var(--text); font-variant-numeric: tabular-nums; flex: none; }
+
+select {
+  flex: 1; min-width: 0; background: var(--card2); color: var(--text);
+  border: 1px solid rgba(255,255,255,.08); border-radius: 8px;
+  padding: 7px 10px; font-family: inherit; font-size: 12.5px; outline: none;
+  transition: border-color .15s;
+  text-overflow: ellipsis; white-space: nowrap; overflow: hidden;
+}
+select:focus { border-color: var(--accent); }
+
+/* segmented control */
+.seg { display: flex; background: var(--card2); border-radius: 9px; padding: 3px; gap: 3px; }
+.seg button {
+  flex: 1; border: 0; border-radius: 7px; padding: 7px 0; cursor: pointer;
+  background: transparent; color: var(--dim); font-family: inherit; font-size: 12.5px;
+  transition: all .15s;
+}
+.seg button.on {
+  background: var(--accent); color: #06121a; font-weight: 600;
+  box-shadow: 0 0 12px var(--accent-dim);
+}
+
+/* toggle */
+.tgl { position: relative; width: 38px; height: 20px; flex: none; cursor: pointer; }
+.tgl input { opacity: 0; width: 0; height: 0; }
+.tgl .tr {
+  position: absolute; inset: 0; border-radius: 20px; background: var(--card2);
+  border: 1px solid rgba(255,255,255,.1); transition: all .18s;
+}
+.tgl .tr::after {
+  content: ""; position: absolute; left: 2px; top: 2px; width: 14px; height: 14px;
+  border-radius: 50%; background: var(--dim); transition: all .18s;
+}
+.tgl input:checked + .tr { background: rgba(0,210,200,.25); border-color: var(--accent); }
+.tgl input:checked + .tr::after { left: 20px; background: var(--accent); box-shadow: 0 0 8px var(--accent-dim); }
+.tgl-label { color: var(--text); }
+
+/* range */
+input[type=range] {
+  -webkit-appearance: none; appearance: none; flex: 1; height: 4px; border-radius: 2px;
+  background: linear-gradient(90deg, var(--accent) var(--fill,50%), #2a3040 var(--fill,50%));
+  outline: none; cursor: pointer;
+}
+input[type=range]::-webkit-slider-thumb {
+  -webkit-appearance: none; appearance: none; width: 14px; height: 14px; border-radius: 50%;
+  background: #fff; border: 2px solid var(--accent);
+  box-shadow: 0 0 8px var(--accent-dim); transition: transform .12s;
+}
+input[type=range]::-webkit-slider-thumb:hover { transform: scale(1.2); }
+
+/* weights grid */
+.wgrid { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 18px; }
+.wgrid .row label { width: 34px; color: var(--text); font-weight: 600; }
+.wgrid .row .val { width: 44px; }
+
+/* buttons */
+.btns { display: flex; gap: 10px; justify-content: flex-end; margin: 4px 0 12px; }
+button.act {
+  border-radius: 9px; padding: 8px 18px; cursor: pointer; font-family: inherit;
+  font-size: 12.5px; border: 1px solid var(--accent); background: transparent;
+  color: var(--accent); transition: all .15s;
+}
+button.act:hover { background: rgba(0,210,200,.12); box-shadow: 0 0 12px var(--accent-dim); }
+button.act.primary { background: var(--accent); color: #06121a; font-weight: 600; }
+button.act.primary:hover { box-shadow: 0 0 16px var(--accent-dim); }
+button.act.danger { border-color: var(--danger); color: var(--danger); }
+button.act.danger:hover { background: rgba(224,96,96,.12); box-shadow: 0 0 12px rgba(224,96,96,.3); }
+button.act.ghost { border-color: rgba(255,255,255,.15); color: var(--dim); }
+
+/* status footer */
+footer {
+  position: sticky; bottom: 0; display: flex; align-items: center; gap: 10px;
+  background: var(--card2); border-top: 1px solid rgba(255,255,255,.06);
+  margin: 0 -16px; padding: 8px 16px;
+}
+.dot { width: 9px; height: 9px; border-radius: 50%; flex: none; }
+.dot.ok { background: var(--ok); box-shadow: 0 0 8px var(--ok); animation: pulse 1.6s infinite; }
+.dot.warn { background: var(--warn); box-shadow: 0 0 8px var(--warn); animation: pulse 1.6s infinite; }
+.dot.err { background: var(--err); box-shadow: 0 0 8px var(--err); }
+@keyframes pulse { 50% { opacity: .45; } }
+#statusText { font-size: 11.5px; color: var(--dim); flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.bars { display: flex; align-items: flex-end; gap: 3px; height: 22px; flex: none; }
+.bars span {
+  width: 5px; border-radius: 2px; background: var(--accent);
+  opacity: .85; transition: height .1s linear; min-height: 1px;
+}
+.mini-btn {
+  border: 0; background: transparent; color: var(--dim); cursor: pointer;
+  font-size: 11px; padding: 4px 6px; border-radius: 6px;
+}
+.mini-btn:hover { color: var(--text); background: rgba(255,255,255,.06); }
+</style>
+</head>
+<body>
+<header><h1>SoundRadar 声纹雷达</h1><span class="sub">声道方向声纹 · v0.7</span></header>
+
+<div class="card">
+  <h2>设备 DEVICES</h2>
+  <div class="row"><label>输入/捕获</label><select id="selIn"></select></div>
+  <div class="row"><label>输出</label><select id="selOut"></select></div>
+</div>
+
+<div class="card">
+  <h2>模式 MODE</h2>
+  <div class="seg">
+    <button id="modeMono" class="on">右耳单声道</button>
+    <button id="modeStereo">立体声</button>
+  </div>
+</div>
+
+<div class="card">
+  <h2>声纹样式 OVERLAY</h2>
+  <div class="row"><label class="tgl-label">显示声纹</label>
+    <label class="tgl"><input type="checkbox" id="ovOn"><span class="tr"></span></label>
+  </div>
+  <div class="row"><label>渐隐时间</label><input type="range" id="fade" min="300" max="500" step="10"><span class="val" id="fadeV"></span></div>
+  <div class="row"><label>雷达大小</label><input type="range" id="radius" min="60" max="160" step="1"><span class="val" id="radiusV"></span></div>
+  <div class="row"><label>阈值 绿→黄</label><input type="range" id="low" min="5" max="95" step="1"><span class="val" id="lowV"></span></div>
+  <div class="row"><label>阈值 黄→红</label><input type="range" id="high" min="5" max="95" step="1"><span class="val" id="highV"></span></div>
+  <div class="row"><label>位置X</label><input type="range" id="posX" min="-50" max="50" step="1"><span class="val" id="posXV"></span></div>
+  <div class="row"><label>位置Y</label><input type="range" id="posY" min="0" max="50" step="1"><span class="val" id="posYV"></span></div>
+  <div class="row"><label>特效强度</label><input type="range" id="fx" min="0" max="100" step="1"><span class="val" id="fxV"></span></div>
+</div>
+
+<div class="card">
+  <h2>8 声道权重 WEIGHTS</h2>
+  <div class="wgrid" id="wgrid"></div>
+  <div class="btns" style="margin-top:8px"><button class="act ghost" id="resetW">重置 Reset</button></div>
+</div>
+
+<div class="card">
+  <h2>其他 MISC</h2>
+  <div class="row"><label class="tgl-label" style="width:auto">声音分类（实验性）</label>
+    <label class="tgl"><input type="checkbox" id="clsOn"><span class="tr"></span></label>
+  </div>
+  <div class="row"><label class="tgl-label" style="width:auto">开机自启</label>
+    <label class="tgl"><input type="checkbox" id="autoOn"><span class="tr"></span></label>
+  </div>
+</div>
+
+<div class="btns">
+  <button class="act danger" id="btnExit">退出程序</button>
+  <button class="act ghost" id="btnMin">最小化到托盘</button>
+  <button class="act primary" id="btnApply">应用 Apply</button>
+</div>
+
+<footer>
+  <span class="dot warn" id="dot"></span>
+  <span id="statusText">启动中…</span>
+  <div class="bars" id="bars"></div>
+</footer>
+
+<script>
+const $ = id => document.getElementById(id);
+const wNames = ["FL","FR","C","LFE","BL","BR","SL","SR"];
+let state = null;
+
+// weights grid
+for (let i = 0; i < 8; i++) {
+  const row = document.createElement('div');
+  row.className = 'row';
+  row.innerHTML = `<label>${wNames[i]}</label>
+    <input type="range" id="w${i}" min="0" max="150" step="5">
+    <span class="val" id="w${i}V"></span>`;
+  $('wgrid').appendChild(row);
+}
+// level bars
+for (let i = 0; i < 8; i++) {
+  const b = document.createElement('span');
+  b.id = 'bar' + i;
+  $('bars').appendChild(b);
+}
+
+function setFill(el) {
+  const pct = (el.value - el.min) / (el.max - el.min) * 100;
+  el.style.setProperty('--fill', pct + '%');
+}
+function bindSlider(id, fmt) {
+  const el = $(id);
+  const show = () => { $(id + 'V').textContent = fmt(el.value); setFill(el); };
+  el.addEventListener('input', show);
+  el._show = show;
+}
+bindSlider('fade', v => v + ' ms');
+bindSlider('radius', v => v + ' px');
+bindSlider('low', v => (v/100).toFixed(2));
+bindSlider('high', v => (v/100).toFixed(2));
+bindSlider('posX', v => (v>0?'+':'') + v + '%');
+bindSlider('posY', v => v + '%');
+bindSlider('fx', v => v + '%');
+for (let i = 0; i < 8; i++) bindSlider('w' + i, v => (v/100).toFixed(2));
+
+function setMode(m) {
+  $('modeMono').classList.toggle('on', m !== 'stereo');
+  $('modeStereo').classList.toggle('on', m === 'stereo');
+}
+$('modeMono').onclick = () => setMode('right-mono');
+$('modeStereo').onclick = () => setMode('stereo');
+
+function fillSelect(el, names) {
+  const cur = el.selectedIndex;
+  el.innerHTML = '';
+  names.forEach(n => el.add(new Option(n, n)));
+  if (cur >= 0 && cur < names.length) el.selectedIndex = cur;
+}
+
+function applyState(s) {
+  state = s;
+  fillSelect($('selIn'), s.devicesIn);
+  fillSelect($('selOut'), s.devicesOut);
+  if (s.selIn !== undefined && document.activeElement !== $('selIn')) $('selIn').selectedIndex = s.selIn;
+  if (s.selOut !== undefined && document.activeElement !== $('selOut')) $('selOut').selectedIndex = s.selOut;
+  const c = s.config;
+  setMode(c.mode);
+  $('ovOn').checked = !!c.overlay_enabled;
+  $('clsOn').checked = !!c.classify_enabled;
+  $('autoOn').checked = !!c.autostart;
+  const set = (id, v) => { if (document.activeElement !== $(id)) { $(id).value = v; } $(id)._show(); };
+  set('fade', c.fade_ms); set('radius', c.radar_radius);
+  set('low', Math.round(c.overlay_low*100)); set('high', Math.round(c.overlay_high*100));
+  set('posX', c.pos_x_pct); set('posY', c.pos_y_pct); set('fx', c.overlay_fx);
+  for (let i = 0; i < 8; i++) set('w' + i, Math.round(c.weights[i]*100));
+  // status
+  const dot = $('dot');
+  dot.className = 'dot ' + (s.status.running ? 'ok' : (s.status.error ? 'err' : 'warn'));
+  $('statusText').textContent = s.status.text;
+  for (let i = 0; i < 8; i++) {
+    const lv = Math.min(1, s.levels[i] || 0);
+    const b = $('bar' + i);
+    b.style.height = (1 + lv * 21) + 'px';
+    b.style.background = lv > c.overlay_high ? '#ff5040' :
+                         lv > c.overlay_low ? '#e8b93f' : '#00d2c8';
+  }
+}
+
+function collectConfig() {
+  return {
+    mode: $('modeStereo').classList.contains('on') ? 'stereo' : 'right-mono',
+    overlay_enabled: $('ovOn').checked,
+    classify_enabled: $('clsOn').checked,
+    autostart: $('autoOn').checked,
+    fade_ms: +$('fade').value,
+    radar_radius: +$('radius').value,
+    overlay_low: (+$('low').value)/100,
+    overlay_high: (+$('high').value)/100,
+    pos_x_pct: +$('posX').value,
+    pos_y_pct: +$('posY').value,
+    overlay_fx: +$('fx').value,
+    weights: [0,1,2,3,4,5,6,7].map(i => (+$('w'+i).value)/100)
+  };
+}
+const post = o => window.chrome.webview.postMessage(o);
+$('btnApply').onclick = () => post({cmd:'apply', selIn: $('selIn').selectedIndex,
+                                    selOut: $('selOut').selectedIndex, config: collectConfig()});
+$('btnMin').onclick = () => post({cmd:'minimize'});
+$('btnExit').onclick = () => post({cmd:'exit'});
+$('resetW').onclick = () => post({cmd:'resetWeights'});
+
+window.chrome.webview.addEventListener('message', ev => {
+  if (ev.data && ev.data.type === 'state') applyState(ev.data);
+});
+post({cmd:'ready'});
+</script>
+</body>
+</html>
