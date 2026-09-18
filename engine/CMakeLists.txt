@@ -1,4 +1,20 @@
-# engine/CMakeLists.txt - SoundRadar.exe: audio engine + overlay + tray (no third-party deps)
+# engine/CMakeLists.txt - SoundRadar.exe: audio engine + overlay + tray + WebView2 GUI
+# (no third-party deps; WebView2 SDK is a system runtime + NuGet headers/loader)
+
+find_program(PYTHON_EXE python REQUIRED)
+
+# embed the HTML UI into a C++ header at configure time
+execute_process(
+    COMMAND ${PYTHON_EXE} ${CMAKE_CURRENT_SOURCE_DIR}/embed_html.py
+            ${CMAKE_CURRENT_SOURCE_DIR}/gui_web.html
+            ${CMAKE_CURRENT_BINARY_DIR}/gui_web_html.h
+    RESULT_VARIABLE embed_rc
+)
+if(NOT embed_rc EQUAL 0)
+    message(FATAL_ERROR "embed_html.py failed: ${embed_rc}")
+endif()
+
+set(WEBVIEW2_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../tools/webview2/build/native)
 
 add_executable(SoundRadar
     main.cpp
@@ -14,7 +30,7 @@ add_executable(SoundRadar
     pantest.cpp
     tray.cpp
     simulate.cpp
-    gui.cpp
+    gui2.cpp
     log.cpp
     ../overlay/overlay.cpp
 )
@@ -30,11 +46,14 @@ target_compile_definitions(SoundRadar PRIVATE
     _CRT_SECURE_NO_WARNINGS
 )
 
+target_include_directories(SoundRadar PRIVATE
+    ${CMAKE_CURRENT_BINARY_DIR}          # gui_web_html.h
+    ${WEBVIEW2_DIR}/include              # WebView2.h
+)
+
 if(MSVC)
-    # /utf-8: bilingual (Chinese) string literals in tray menu
+    # /utf-8: bilingual (Chinese) string literals
     target_compile_options(SoundRadar PRIVATE /W4 /O2 /permissive- /utf-8)
-    # static CRT: the exe runs on machines without the VC++ redistributable
-    set_property(TARGET SoundRadar PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 endif()
 
 target_link_libraries(SoundRadar PRIVATE
@@ -42,10 +61,13 @@ target_link_libraries(SoundRadar PRIVATE
     avrt
     winmm
     comctl32
+    shlwapi
+    uxtheme
     d3d11
     dxgi
     d2d1
     dwrite
     dcomp
     windowscodecs
+    ${WEBVIEW2_DIR}/x64/WebView2LoaderStatic.lib # static loader: no DLL shipping
 )

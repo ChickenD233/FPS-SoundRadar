@@ -24,7 +24,7 @@
 #include "classify.h"
 #include "config.h"
 #include "downmix.h"
-#include "gui.h"
+#include "gui2.h"
 #include "log.h"
 #include "measure.h"
 #include "meters.h"
@@ -324,6 +324,12 @@ int RunApp(sr::AppConfig& cfg, const std::wstring& configPath, bool trayMode,
     hooks.onExit = [&] { SetEvent(g_quit); };
     hooks.statusLevel = [&] {
         return pipeline.running ? 0 : (pipeline.lastError.empty() ? 1 : 2);
+    };
+    hooks.levels = [&] {
+        std::array<float, 8> l{};
+        std::lock_guard<std::mutex> lk(meters.mu);
+        std::memcpy(l.data(), meters.frame.level, sizeof(l));
+        return l;
     };
     hooks.statusText = [&]() -> std::wstring {
         if (!pipeline.running)
@@ -633,7 +639,6 @@ bool SnapshotWindowToBmp(HWND hwnd, const std::wstring& path) {
 }
 
 int RunGuiTest() {
-    using namespace sr; // control IDs
     sr::ComInit com;
     if (!com.Ok()) return 1;
 
@@ -643,7 +648,7 @@ int RunGuiTest() {
 
     int applyCalls = 0;
     bool lastDevChanged = false;
-    HANDLE testQuit = CreateEventW(nullptr, TRUE, FALSE, nullptr); // Exit button target
+    HANDLE testQuit = CreateEventW(nullptr, TRUE, FALSE, nullptr); // exit cmd target
     sr::Gui::Hooks hooks;
     hooks.cfg = &cfg;
     hooks.configPath = configPath;
@@ -654,74 +659,88 @@ int RunGuiTest() {
     hooks.onExit = [&] { SetEvent(testQuit); };
     hooks.statusLevel = [] { return 1; };
     hooks.statusText = [] { return std::wstring(L"test status"); };
+    hooks.levels = [] { return std::array<float, 8>{}; };
+
+    bool ok = true;
+    auto check = [&](const char* name, bool pass) {
+        std::printf("  [%s] %s\n", pass ? "PASS" : "FAIL", name);
+        if (!pass) ok = false;
+    };
 
     sr::Gui gui;
-    if (!gui.Create(hooks, /*hidden=*/true)) {
-        std::printf("[FAIL] gui.Create failed\n");
+    bool created = gui.Create(hooks, /*hidden=*/true);
+    check("window created hidden", created && !gui.IsVisible());
+    if (!created) {
+        std::printf("guitest: FAIL\n");
+        CloseHandle(testQuit);
         return 1;
     }
-    HWND hwnd = gui.Hwnd();
-    std::printf("gui created hidden: visible=%d (must be 0)\n", IsWindowVisible(hwnd) ? 1 : 0);
+    LONG guiEx = GetWindowLongW(gui.Hwnd(), GWL_EXSTYLE);
+    check("taskbar button present (no WS_EX_TOOLWINDOW)", (guiEx & WS_EX_TOOLWINDOW) == 0);
 
-    // control inventory
-    std::printf("control inventory:\n");
-    struct EnumCtx { int count; };
-    EnumCtx ectx{ 0 };
-    EnumChildWindows(
-        hwnd,
-        [](HWND child, LPARAM lp) -> BOOL {
-            wchar_t cls[64] = {}, text[128] = {};
-            GetClassNameW(child, cls, 64);
-            GetWindowTextW(child, text, 128);
-            int id = GetDlgCtrlID(child);
-            std::printf("  id=%5d  %-16s  %s\n", id, sr::ToUtf8(cls).c_str(),
-                        sr::ToUtf8(text).c_str());
-            ++reinterpret_cast<EnumCtx*>(lp)->count;
-            return TRUE;
-        },
-        reinterpret_cast<LPARAM>(&ectx));
-    std::printf("  total controls: %d\n", ectx.count);
+    // wait for webview + page bridge (pump messages manually; no visible window)
+    uint64_t t0 = GetTickCount64();
+    while (!gui.WebViewReady() && GetTickCount64() - t0 < 10000) {
+        gui.PumpMessages();
+        Sleep(20);
+    }
+    check("webview ready", gui.WebViewReady());
+    t0 = GetTickCount64();
+    while (!gui.PageReady() && GetTickCount64() - t0 < 10000) {
+        gui.PumpMessages();
+        Sleep(20);
+    }
+    check("page bridge ready", gui.PageReady());
 
-    // manipulate: 2nd entry of each device dropdown, stereo radio, sliders
-    auto send = [&](int id, UINT msg, WPARAM wp, LPARAM lp) {
-        return SendMessageW(GetDlgItem(hwnd, id), msg, wp, lp);
-    };
-    int inCount = (int)send(IDC_COMBO_INPUT, CB_GETCOUNT, 0, 0);
-    int outCount = (int)send(IDC_COMBO_OUTPUT, CB_GETCOUNT, 0, 0);
-    bool comboOk = inCount >= 2 && outCount >= 2;
+    // DOM inventory via the bridge
+    std::wstring inv;
+    bool evalOk = gui.EvalJson(
+        L"String('ranges='+document.querySelectorAll('input[type=range]').length"
+        L"+';selects='+document.querySelectorAll('select').length"
+        L"+';checks='+document.querySelectorAll('input[type=checkbox]').length"
+        L"+';buttons='+document.querySelectorAll('button').length)", inv);
+    std::printf("  dom inventory: %s\n", sr::ToUtf8(inv).c_str());
+    check("dom: 15 sliders, 2 selects, 3 toggles, 6 buttons",
+          evalOk && inv.find(L"ranges=15") != std::wstring::npos &&
+          inv.find(L"selects=2") != std::wstring::npos &&
+          inv.find(L"checks=3") != std::wstring::npos &&
+          inv.find(L"buttons=6") != std::wstring::npos);
+
+    // expected device names for dropdown index 1
+    auto caps = sr::EnumerateEndpoints(eCapture);
+    auto rens = sr::EnumerateEndpoints(eRender);
+    bool comboOk = caps.size() >= 1 && rens.size() >= 1;
     std::wstring expectInput, expectOutput;
     if (comboOk) {
-        send(IDC_COMBO_INPUT, CB_SETCURSEL, 1, 0);
-        send(IDC_COMBO_OUTPUT, CB_SETCURSEL, 1, 0);
-        wchar_t buf[256] = {};
-        send(IDC_COMBO_INPUT, CB_GETLBTEXT, 1, (LPARAM)buf);
-        expectInput = buf;
-        wchar_t buf2[256] = {};
-        send(IDC_COMBO_OUTPUT, CB_GETLBTEXT, 1, (LPARAM)buf2);
-        expectOutput = buf2;
-        size_t v = expectOutput.find(L" (虚拟)");
-        if (v != std::wstring::npos) expectOutput.erase(v);
-    } else {
-        std::printf("  note: fewer than 2 endpoints, skipping dropdown selection\n");
+        expectInput = caps.front().name;
+        expectOutput = rens.front().name;
+        if (sr::IsVirtualAudioName(expectOutput)) {
+            size_t v = expectOutput.find(L" (虚拟)");
+            if (v != std::wstring::npos) expectOutput.erase(v);
+        }
     }
-    CheckRadioButton(hwnd, IDC_RADIO_MONO, IDC_RADIO_STEREO, IDC_RADIO_STEREO);
-    auto setS = [&](int id, int v) { send(id, TBM_SETPOS, TRUE, v); };
-    setS(IDC_SLIDER_FADE, 350);
-    setS(IDC_SLIDER_RADIUS, 120);
-    setS(IDC_SLIDER_LOW, 20);
-    setS(IDC_SLIDER_HIGH, 60);
-    setS(IDC_SLIDER_POSX, 10);
-    setS(IDC_SLIDER_POSY, 25);
-    setS(IDC_SLIDER_FX, 80);
-    setS(IDC_SLIDER_W0 + 0, 10); // FL 0.50
-    setS(IDC_SLIDER_W0 + 3, 24); // LFE 1.20
 
-    send(IDC_BTN_APPLY, BM_CLICK, 0, 0);
+    // inject an apply message as the page would send it
+    const wchar_t* applyJson =
+        L"{\"cmd\":\"apply\",\"selIn\":1,\"selOut\":1,\"config\":{\"mode\":\"stereo\","
+        L"\"overlay_enabled\":true,\"classify_enabled\":true,\"autostart\":false,"
+        L"\"fade_ms\":350,\"radar_radius\":120,\"overlay_low\":0.2,\"overlay_high\":0.6,"
+        L"\"pos_x_pct\":10,\"pos_y_pct\":25,\"overlay_fx\":80,"
+        L"\"weights\":[0.5,1,1,1.2,0.8,0.8,0.9,0.9]}}";
+    check("inject apply", gui.InjectBridgeMessage(applyJson));
+    t0 = GetTickCount64();
+    while (applyCalls == 0 && GetTickCount64() - t0 < 5000) {
+        gui.PumpMessages();
+        Sleep(10);
+    }
+    check("apply callback fired once", applyCalls == 1);
+    check("device change detected", !comboOk || lastDevChanged);
 
     // reload config and verify round-trip
     sr::AppConfig c2;
     bool loaded = sr::LoadConfig(configPath, c2);
-    std::printf("config file after Apply:\n");
+    check("config file written", loaded);
+    std::printf("  config file after Apply:\n");
     {
         FILE* f = nullptr;
         _wfopen_s(&f, configPath.c_str(), L"rb");
@@ -733,30 +752,6 @@ int RunGuiTest() {
     }
     int sw = GetSystemMetrics(SM_CXSCREEN), sh = GetSystemMetrics(SM_CYSCREEN);
     auto nearf = [](float a, float b) { return std::fabs(a - b) < 0.001f; };
-    // Exit button: must signal the quit event (same path as tray exit)
-    send(IDC_BTN_EXIT, BM_CLICK, 0, 0);
-    bool exitOk = WaitForSingleObject(testQuit, 500) == WAIT_OBJECT_0;
-    ResetEvent(testQuit);
-
-    // dark-theme screenshot of the HIDDEN window (PrintWindow)
-    bool shotOk = SnapshotWindowToBmp(hwnd, L"build\\gui-dark.bmp");
-    std::printf("gui screenshot: build\\gui-dark.bmp (%s)\n", shotOk ? "written" : "FAILED");
-
-    // GUI window must keep a normal taskbar button (not a tool window)
-    LONG guiEx = GetWindowLongW(hwnd, GWL_EXSTYLE);
-    bool taskbarOk = (guiEx & WS_EX_TOOLWINDOW) == 0;
-
-    bool ok = loaded;
-    auto check = [&](const char* name, bool pass) {
-        std::printf("  [%s] %s\n", pass ? "PASS" : "FAIL", name);
-        if (!pass) ok = false;
-    };
-    check("control count 65 (dark-theme layout)", ectx.count == 65);
-    check("gui screenshot", shotOk);
-    check("exit button signals quit event", exitOk);
-    check("taskbar button present (no WS_EX_TOOLWINDOW)", taskbarOk);
-    check("apply callback fired once", applyCalls == 1);
-    check("device change detected", !comboOk || lastDevChanged);
     check("mode = stereo", c2.downmix.mode == sr::DownmixStereo);
     check("fade 350", c2.analysis.fadeMs == 350);
     check("radius 120", c2.overlay.radius == 120);
@@ -771,7 +766,6 @@ int RunGuiTest() {
         check("capture_device = dropdown entry 2", c2.captureDevice == expectInput);
         check("output_device = dropdown entry 2", c2.outputDevice == expectOutput);
     }
-    // live globals updated
     {
         std::lock_guard<std::mutex> lk(sr::g_downmix.mu);
         check("g_downmix mode stereo", sr::g_downmix.cfg.mode == sr::DownmixStereo);
@@ -786,7 +780,32 @@ int RunGuiTest() {
         check("g_analysis fade 350", sr::g_analysis.cfg.fadeMs == 350);
     }
 
-    DestroyWindow(hwnd);
+    // exit command -> quit event
+    gui.InjectBridgeMessage(L"{\"cmd\":\"exit\"}");
+    t0 = GetTickCount64();
+    while (WaitForSingleObject(testQuit, 0) != WAIT_OBJECT_0 &&
+           GetTickCount64() - t0 < 3000) {
+        gui.PumpMessages();
+        Sleep(10);
+    }
+    check("exit command signals quit", WaitForSingleObject(testQuit, 0) == WAIT_OBJECT_0);
+    ResetEvent(testQuit);
+
+    // screenshot: the ONE allowed visible window (2 s), WebView2 needs to be
+    // visible to render a frame for CapturePreview
+    gui.Show();
+    gui.EvalJson(L"window.scrollTo(0,0);'ok'", inv); // capture from the top
+    t0 = GetTickCount64();
+    while (GetTickCount64() - t0 < 2000) {
+        gui.PumpMessages();
+        Sleep(20);
+    }
+    bool shotOk = gui.CapturePng(L"build\\gui-modern.png");
+    gui.Hide();
+    std::printf("  gui screenshot: build\\gui-modern.png (%s)\n", shotOk ? "written" : "FAILED");
+    check("gui-modern.png captured", shotOk);
+
+    DestroyWindow(gui.Hwnd());
     CloseHandle(testQuit);
     DeleteFileW(configPath.c_str());
     std::printf("guitest: %s\n", ok ? "PASS" : "FAIL");
@@ -825,16 +844,28 @@ int RunSimulateGui(sr::AppConfig cfg) {
     bool guiOk = gui.Create(hooks, /*hidden=*/true);
 
     HWND overlayHwnd = WaitForOverlayWindow(overlay, 3000);
+    // wait for the JS bridge, then apply via an injected bridge message
+    uint64_t t0 = GetTickCount64();
+    while (!gui.PageReady() && GetTickCount64() - t0 < 10000) {
+        gui.PumpMessages();
+        Sleep(20);
+    }
     Sleep(800);
 
-    // change thresholds + a weight through the GUI, then Apply
-    auto send = [&](int id, UINT msg, WPARAM wp, LPARAM lp) {
-        return SendMessageW(GetDlgItem(gui.Hwnd(), id), msg, wp, lp);
-    };
-    send(IDC_SLIDER_LOW, TBM_SETPOS, TRUE, 30);  // 0.30
-    send(IDC_SLIDER_FX, TBM_SETPOS, TRUE, 90);
-    send(IDC_SLIDER_W0 + 1, TBM_SETPOS, TRUE, 25); // FR 1.25
-    send(IDC_BTN_APPLY, BM_CLICK, 0, 0);
+    gui.InjectBridgeMessage(
+        L"{\"cmd\":\"apply\",\"selIn\":0,\"selOut\":0,\"config\":{\"overlay_low\":0.30,"
+        L"\"overlay_fx\":90,\"weights\":[0.7,1.25,1,0.7,0.8,0.8,0.9,0.9]}}");
+    t0 = GetTickCount64();
+    while (GetTickCount64() - t0 < 3000) { // let the message land
+        gui.PumpMessages();
+        Sleep(10);
+        float lw;
+        {
+            std::lock_guard<std::mutex> lk(sr::g_overlay.mu);
+            lw = sr::g_overlay.cfg.lowThreshold;
+        }
+        if (std::fabs(lw - 0.30f) < 0.001f) break;
+    }
 
     // wait for the overlay thread to apply the new config version
     bool overlayApplied = false;
