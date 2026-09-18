@@ -121,7 +121,8 @@ std::vector<DeviceInfo> SelectCaptureEndpoints(const std::wstring& configValue) 
     };
     appendMatches(needle, isDefault ? L"loopback" : L"");
     if (out.empty() && isDefault) {
-        appendMatches(L"Voicemeeter Out B1", L"");
+        appendMatches(L"CABLE Output", L""); // VB-CABLE: free, signed, 8ch
+        if (out.empty()) appendMatches(L"Voicemeeter Out B1", L""); // stereo only
         if (out.empty()) appendMatches(L"Voicemeeter Output", L"");
     }
     return out;

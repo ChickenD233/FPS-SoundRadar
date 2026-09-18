@@ -34,6 +34,9 @@ public:
     // initializes a shared-mode, event-driven capture client (~10 ms buffer).
     bool Init(const std::wstring& captureDevice, std::wstring& err);
 
+    // Prints which channel counts the endpoint accepts in shared mode.
+    void ProbeChannelCounts();
+
     // Blocking capture loop (call on a dedicated thread). Returns when
     // quitEvent is signaled or a fatal stream error occurs.
     void Run(const Sink& sink, HANDLE quitEvent);
