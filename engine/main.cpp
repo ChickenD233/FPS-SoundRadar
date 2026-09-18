@@ -89,7 +89,7 @@ void PrintUsage() {
         "  --guitest              hidden GUI test: controls, Apply, config round-trip\n"
         "  --simulate-gui         hidden GUI + overlay plumbing test\n"
         "  --onscreen-proof       visible overlay + CopyFromScreen pixel check\n"
-        "  --simulate <scenario>  sweep | dual | pulse; feeds synthetic meters ~12 s\n"
+        "  --simulate <scenario>  sweep | dual | pulse | orbit | dual-orbit\n"
         "  --simulate-screenshot <file.bmp>  render one dual frame to a BMP\n"
         "  --overlaytest [bmp]    overlay checks: ex-style, CPU, screenshots\n"
         "  --measure              latency report (needs SoundRadar driver + output)\n"
@@ -321,6 +321,7 @@ int RunApp(sr::AppConfig& cfg, const std::wstring& configPath, bool trayMode,
     sr::Gui::Hooks hooks;
     hooks.cfg = &cfg;
     hooks.configPath = configPath;
+    hooks.onExit = [&] { SetEvent(g_quit); };
     hooks.statusText = [&]() -> std::wstring {
         if (!pipeline.running)
             return L"等待设备 Waiting for device\r\n" + pipeline.lastError;
@@ -577,6 +578,7 @@ int RunGuiTest() {
 
     int applyCalls = 0;
     bool lastDevChanged = false;
+    HANDLE testQuit = CreateEventW(nullptr, TRUE, FALSE, nullptr); // Exit button target
     sr::Gui::Hooks hooks;
     hooks.cfg = &cfg;
     hooks.configPath = configPath;
@@ -584,6 +586,7 @@ int RunGuiTest() {
         ++applyCalls;
         lastDevChanged = devChanged;
     };
+    hooks.onExit = [&] { SetEvent(testQuit); };
     hooks.statusText = [] { return std::wstring(L"test status"); };
 
     sr::Gui gui;
@@ -664,11 +667,23 @@ int RunGuiTest() {
     }
     int sw = GetSystemMetrics(SM_CXSCREEN), sh = GetSystemMetrics(SM_CYSCREEN);
     auto nearf = [](float a, float b) { return std::fabs(a - b) < 0.001f; };
+    // Exit button: must signal the quit event (same path as tray exit)
+    send(IDC_BTN_EXIT, BM_CLICK, 0, 0);
+    bool exitOk = WaitForSingleObject(testQuit, 500) == WAIT_OBJECT_0;
+    ResetEvent(testQuit);
+
+    // GUI window must keep a normal taskbar button (not a tool window)
+    LONG guiEx = GetWindowLongW(hwnd, GWL_EXSTYLE);
+    bool taskbarOk = (guiEx & WS_EX_TOOLWINDOW) == 0;
+
     bool ok = loaded;
     auto check = [&](const char* name, bool pass) {
         std::printf("  [%s] %s\n", pass ? "PASS" : "FAIL", name);
         if (!pass) ok = false;
     };
+    check("control count 56 (incl. Exit button)", ectx.count == 56);
+    check("exit button signals quit event", exitOk);
+    check("taskbar button present (no WS_EX_TOOLWINDOW)", taskbarOk);
     check("apply callback fired once", applyCalls == 1);
     check("device change detected", !comboOk || lastDevChanged);
     check("mode = stereo", c2.downmix.mode == sr::DownmixStereo);
@@ -701,6 +716,7 @@ int RunGuiTest() {
     }
 
     DestroyWindow(hwnd);
+    CloseHandle(testQuit);
     DeleteFileW(configPath.c_str());
     std::printf("guitest: %s\n", ok ? "PASS" : "FAIL");
     return ok ? 0 : 1;
@@ -948,6 +964,119 @@ int RunOnscreenProof(sr::AppConfig cfg) {
     return ok ? 0 : 1;
 }
 
+// --- orbit tests: moving direction arrows ------------------------------------
+
+namespace {
+
+float ShortestAngDist(float a, float b) {
+    return std::fmod(a - b + 540.0f, 360.0f) - 180.0f;
+}
+
+// cosine-power panning law: level of a channel at chDeg for a source at srcDeg
+float PanLevel(float srcDeg, float chDeg, float amp) {
+    float d = std::fabs(ShortestAngDist(srcDeg, chDeg));
+    if (d >= 90.0f) return 0.0f;
+    float c = std::cos(d * 3.14159265f / 180.0f);
+    return amp * c * c;
+}
+
+const float kChAngle[8] = { -30, 30, 0, -999, -135, 135, -90, 90 };
+
+} // namespace
+
+// --simulate orbit: one source rotates 360 deg over ~8 s; the tracked arrow
+// must follow. --simulate dual-orbit: fixed FL source + orbiting source.
+int RunOrbitTest(sr::AppConfig cfg, bool dual) {
+    cfg.overlay.enabled = true;
+    {
+        std::lock_guard<std::mutex> lk(sr::g_overlay.mu);
+        sr::g_overlay.cfg = cfg.overlay;
+        ++sr::g_overlay.version;
+    }
+    sr::SharedMeters meters;
+    sr::Overlay overlay;
+    overlay.Start(cfg.overlay, &meters, g_quit, /*visible=*/false); // headless
+    HWND hwnd = WaitForOverlayWindow(overlay, 3000);
+
+    const double totalT = 8.0; // one revolution
+    double errSum = 0, fixedErrSum = 0;
+    int errN = 0, fixedN = 0;
+    int lastPrint = -1;
+
+    for (int i = 0; i < 400; ++i) {
+        double t = i * 0.02;
+        float theta = std::fmod(static_cast<float>(-180.0 + 360.0 * t / totalT) + 540.0f,
+                                360.0f) - 180.0f;
+        sr::AnalysisFrame fr{};
+        for (int c = 0; c < 8; ++c) {
+            if (c == 3) continue; // LFE
+            float l = PanLevel(theta, kChAngle[c], 0.85f);
+            if (dual) {
+                float f = PanLevel(-30.0f, kChAngle[c], 0.8f);
+                if (f > l) l = f;
+            }
+            fr.level[c] = l;
+            fr.peak[c] = l >= 0.5f;
+            if (l >= 0.05f) fr.active = true;
+        }
+        {
+            std::lock_guard<std::mutex> lk(meters.mu);
+            meters.frame = fr;
+        }
+        Sleep(20);
+
+        if (i / 25 != lastPrint && i > 25) { // every 500 ms after settle
+            lastPrint = i / 25;
+            std::vector<float> arrows = overlay.DebugArrowAngles();
+            if (dual) {
+                // fixed arrow: nearest to -30; moving arrow: nearest to theta
+                float bestFixed = 1e9f, bestMove = 1e9f, fixedA = 0, moveA = 0;
+                for (float a : arrows) {
+                    float df = std::fabs(ShortestAngDist(a, -30.0f));
+                    float dm = std::fabs(ShortestAngDist(a, theta));
+                    if (df < bestFixed) { bestFixed = df; fixedA = a; }
+                    if (dm < bestMove) { bestMove = dm; moveA = a; }
+                }
+                std::printf("t=%4.1fs orbit=%5.1f arrows: fixed=%5.1f (err %4.1f) "
+                            "moving=%5.1f (err %4.1f)\n",
+                            t, theta, fixedA, bestFixed, moveA, bestMove);
+                if (arrows.size() >= 2) {
+                    fixedErrSum += bestFixed;
+                    ++fixedN;
+                }
+                errSum += bestMove;
+                ++errN;
+            } else {
+                float bestErr = 180.0f, bestA = 0;
+                for (float a : arrows) {
+                    float d = std::fabs(ShortestAngDist(a, theta));
+                    if (d < bestErr) { bestErr = d; bestA = a; }
+                }
+                std::printf("t=%4.1fs expected=%5.1f measured=%5.1f err=%4.1f\n", t,
+                            theta, bestA, bestErr);
+                errSum += bestErr;
+                ++errN;
+            }
+        }
+    }
+
+    overlay.Stop();
+    (void)hwnd;
+    double meanErr = errN ? errSum / errN : 180.0;
+    double meanFixed = fixedN ? fixedErrSum / fixedN : (dual ? 180.0 : 0.0);
+    bool ok;
+    if (dual) {
+        ok = meanErr < 15.0 && meanFixed < 10.0 && errN > 0 && fixedN > 0;
+        std::printf("dual-orbit: mean moving err %.1f deg, mean fixed err %.1f deg -> %s\n",
+                    meanErr, meanFixed, ok ? "PASS" : "FAIL");
+    } else {
+        ok = meanErr < 15.0 && errN > 0;
+        std::printf("orbit: mean abs error %.1f deg over %d samples -> %s\n", meanErr, errN,
+                    ok ? "PASS" : "FAIL");
+    }
+    return ok ? 0 : 1;
+}
+
 } // namespace
 
 // --diag: listen-only health check, 10 s, plays NOTHING (ear-safe).
@@ -1138,15 +1267,21 @@ int wmain(int argc, wchar_t** argv) {
     } else if (simGui) {
         rc = RunSimulateGui(cfg);
     } else if (!simScenario.empty()) {
-        sr::SimScenario sc = sr::SimSweep;
-        if (simScenario == L"sweep") sc = sr::SimSweep;
-        else if (simScenario == L"dual") sc = sr::SimDual;
-        else if (simScenario == L"pulse") sc = sr::SimPulse;
-        else {
-            fwprintf(stderr, L"--simulate must be sweep, dual or pulse\n");
-            rc = 1;
+        if (simScenario == L"orbit") {
+            rc = RunOrbitTest(cfg, false);
+        } else if (simScenario == L"dual-orbit") {
+            rc = RunOrbitTest(cfg, true);
+        } else {
+            sr::SimScenario sc = sr::SimSweep;
+            if (simScenario == L"sweep") sc = sr::SimSweep;
+            else if (simScenario == L"dual") sc = sr::SimDual;
+            else if (simScenario == L"pulse") sc = sr::SimPulse;
+            else {
+                fwprintf(stderr, L"--simulate must be sweep, dual, pulse, orbit or dual-orbit\n");
+                rc = 1;
+            }
+            if (rc == 0) rc = RunSimulate(cfg, sc);
         }
-        if (rc == 0) rc = RunSimulate(cfg, sc);
     } else {
         // GUI / tray mode: single instance enforced here (test modes bypass it)
         if (!EnsureSingleInstance()) {

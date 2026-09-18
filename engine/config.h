@@ -15,7 +15,7 @@ struct OverlayConfig {
     float lowThreshold = 0.15f;  // level <= low  -> green
     float highThreshold = 0.5f;  // low..high -> yellow, above -> red
     int offsetX = 0;          // radar center offset from screen center, px (right positive)
-    int offsetY = 180;        // radar center offset from screen center, px (down positive)
+    int offsetY = 0;          // radar center offset from screen center, px (down positive)
     int radius = 90;          // radar ring radius, px
     int fxPct = 60;           // effects intensity 0-100 (glow/pulse; 0 = flat minimal)
 };

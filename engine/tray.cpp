@@ -1,6 +1,8 @@
 // tray.cpp - NOTIFYICON tray with bilingual menu + autostart registry.
 #include "tray.h"
 
+#include "log.h"
+
 #include <shellapi.h>
 
 #include <cstdio>
@@ -131,14 +133,20 @@ bool Tray::Init(const AppConfig& cfg, Handlers handlers) {
     wc.lpfnWndProc = WndProc;
     wc.hInstance = GetModuleHandleW(nullptr);
     wc.lpszClassName = kTrayClass;
-    if (!RegisterClassExW(&wc) && GetLastError() != ERROR_CLASS_ALREADY_EXISTS)
+    if (!RegisterClassExW(&wc) && GetLastError() != ERROR_CLASS_ALREADY_EXISTS) {
+        Log("tray: RegisterClassEx failed err=%lu", GetLastError());
         return false;
+    }
 
     hwnd_ = CreateWindowExW(0, kTrayClass, L"SoundRadar Tray", 0, 0, 0, 0, 0,
                             HWND_MESSAGE, nullptr, wc.hInstance, this);
-    if (!hwnd_) return false;
+    if (!hwnd_) {
+        Log("tray: CreateWindowEx failed err=%lu", GetLastError());
+        return false;
+    }
 
     icon_ = CreateRadarIcon();
+    if (!icon_) Log("tray: CreateRadarIcon failed err=%lu", GetLastError());
     NOTIFYICONDATAW nid = {};
     nid.cbSize = sizeof(nid);
     nid.hWnd = hwnd_;
@@ -147,7 +155,15 @@ bool Tray::Init(const AppConfig& cfg, Handlers handlers) {
     nid.uCallbackMessage = kTrayMsg;
     nid.hIcon = icon_;
     wcscpy_s(nid.szTip, L"SoundRadar 声纹雷达");
-    if (!Shell_NotifyIconW(NIM_ADD, &nid)) return false;
+    if (!Shell_NotifyIconW(NIM_ADD, &nid)) {
+        Log("tray: NIM_ADD failed, GetLastError=%lu", GetLastError());
+        return false;
+    }
+    Log("tray: NIM_ADD ok");
+    // Win11: some builds hide icons registered with the legacy version
+    nid.uVersion = NOTIFYICON_VERSION_4;
+    if (!Shell_NotifyIconW(NIM_SETVERSION, &nid))
+        Log("tray: NIM_SETVERSION failed, GetLastError=%lu", GetLastError());
 
     SetTimer(hwnd_, kTimerId, 500, nullptr);
     return true;
@@ -213,6 +229,7 @@ LRESULT CALLBACK Tray::WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     if (msg == WM_NCCREATE) {
         self = static_cast<Tray*>(reinterpret_cast<CREATESTRUCTW*>(lp)->lpCreateParams);
         SetWindowLongPtrW(hwnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(self));
+        self->hwnd_ = hwnd; // needed before CreateWindowEx returns
     } else {
         self = reinterpret_cast<Tray*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
     }
