@@ -166,6 +166,10 @@ struct Pipeline {
         capBufMs = cap_->GetFormat().bufferFrames * 1000.0 / cap_->GetFormat().sampleRate;
         renBufMs = ren_->GetFormat().bufferMs;
         periodMs = cap_->GetFormat().periodMs;
+        { // publish the real channel count: 2ch input switches the overlay to pan tracking
+            std::lock_guard<std::mutex> lk(meters->mu);
+            meters->srcChannels = cap_->GetFormat().channels;
+        }
         sr::Log("pipeline: capture=%s render=%s (%s)",
                 sr::ToUtf8(capName).c_str(), sr::ToUtf8(renName).c_str(),
                 exclusive ? "exclusive" : "shared");
@@ -1080,9 +1084,12 @@ int RunOnscreenProof(sr::AppConfig cfg) {
         std::vector<uint8_t> rgb;
         capOk = CaptureScreenRegion(cx - box, cy - box, W, W,
                                     L"build\\onscreen-proof.bmp", rgb);
-        // edge bands live at the screen edges: capture the top-left FL segment
-        std::vector<uint8_t> bandOn;
-        CaptureScreenRegion(20, 0, 200, 40, L"build\\proof-band-on.bmp", bandOn);
+        // edge capsules: FL projects onto the top border, BR onto the bottom.
+        // Capture both strips (positions derived from the same projection).
+        std::vector<uint8_t> bandTopOn, bandBottomOn;
+        CaptureScreenRegion(100, 0, 300, 40, L"build\\proof-band-top.bmp", bandTopOn);
+        CaptureScreenRegion(1250, sh - 40, 220, 40, L"build\\proof-band-bottom.bmp",
+                            bandBottomOn);
 
         // background-independent diff: capture again with the overlay gone
         overlay.Stop();
@@ -1090,8 +1097,10 @@ int RunOnscreenProof(sr::AppConfig cfg) {
         std::vector<uint8_t> rgbOff;
         CaptureScreenRegion(cx - box, cy - box, W, W, L"build\\onscreen-proof-off.bmp",
                             rgbOff);
-        std::vector<uint8_t> bandOff;
-        CaptureScreenRegion(20, 0, 200, 40, L"build\\proof-band-off.bmp", bandOff);
+        std::vector<uint8_t> bandTopOff, bandBottomOff;
+        CaptureScreenRegion(100, 0, 300, 40, L"build\\proof-band-top-off.bmp", bandTopOff);
+        CaptureScreenRegion(1250, sh - 40, 220, 40, L"build\\proof-band-bottom-off.bmp",
+                            bandBottomOff);
 
         auto lum = [&](const std::vector<uint8_t>& buf, int px, int py) -> double {
             size_t i = (static_cast<size_t>(py) * W + px) * 3;
@@ -1138,14 +1147,20 @@ int RunOnscreenProof(sr::AppConfig cfg) {
                 double d = std::fabs(lum(rgb, px, py) - lum(rgbOff, px, py));
                 if (d > 10.0) ++diffPixels;
             }
-        // 4) edge band: top-left strip must change too (FL band)
+        // 4) edge capsules: top strip (FL) and bottom strip (BR) must change
         int bandDiff = 0;
-        for (size_t i = 0; i + 2 < bandOn.size(); i += 3) {
-            double d = 0.0;
-            for (int k = 0; k < 3; ++k)
-                d += std::fabs(static_cast<int>(bandOn[i + k]) - bandOff[i + k]);
-            if (d > 30.0) ++bandDiff;
-        }
+        auto bandDelta = [&](const std::vector<uint8_t>& on,
+                             const std::vector<uint8_t>& off) {
+            int n = 0;
+            for (size_t i = 0; i + 2 < on.size() && i + 2 < off.size(); i += 3) {
+                double d = 0.0;
+                for (int k = 0; k < 3; ++k)
+                    d += std::fabs(static_cast<int>(on[i + k]) - off[i + k]);
+                if (d > 30.0) ++n;
+            }
+            return n;
+        };
+        bandDiff = bandDelta(bandTopOn, bandTopOff) + bandDelta(bandBottomOn, bandBottomOff);
         lastBandDiff = bandDiff;
 
         if (attempt > 0)
@@ -1204,8 +1219,12 @@ int RunStyleShot(sr::AppConfig cfg) {
     int cx = sw / 2, cy = sh / 2;
     int box = cfg.overlay.radius + 110;
     std::vector<uint8_t> rgb;
+    // radar crop for detail review
     bool capOk = CaptureScreenRegion(cx - box, cy - box, box * 2, box * 2,
                                      L"build\\overlay-style.bmp", rgb);
+    // full screen: edge capsules are at the borders
+    std::vector<uint8_t> full;
+    CaptureScreenRegion(0, 0, sw, sh, L"build\\overlay-style-full.bmp", full);
     std::printf("style-shot: capture=%s hwnd=%s frames=%llu -> build\\overlay-style.bmp\n",
                 capOk ? "ok" : "FAIL", hwnd ? "ok" : "MISSING",
                 (unsigned long long)overlay.FramesDrawn());
@@ -1231,6 +1250,71 @@ float PanLevel(float srcDeg, float chDeg, float amp) {
 
 const float kChAngle[8] = { -30, 30, 0, -999, -135, 135, -90, 90 };
 
+
+// --- pan sweep: stereo pan tracking -------------------------------------------
+
+// --simulate pan-sweep: srcChannels=2, pan sweeps -1..+1 sinusoidally; the
+// single indicator must track angle = pan * 90 deg within 12 deg mean error.
+int RunPanSweep(sr::AppConfig cfg) {
+    cfg.overlay.enabled = true;
+    {
+        std::lock_guard<std::mutex> lk(sr::g_overlay.mu);
+        sr::g_overlay.cfg = cfg.overlay;
+        ++sr::g_overlay.version;
+    }
+    sr::SharedMeters meters;
+    {
+        std::lock_guard<std::mutex> lk(meters.mu);
+        meters.srcChannels = 2;
+    }
+    sr::Overlay overlay;
+    overlay.Start(cfg.overlay, &meters, g_quit, /*visible=*/false);
+    HWND hwnd = WaitForOverlayWindow(overlay, 3000);
+    (void)hwnd;
+
+    const double totalT = 6.0;
+    double errSum = 0;
+    int errN = 0;
+    int lastPrint = -1;
+    for (int i = 0; i < 300; ++i) {
+        double t = i * 0.02;
+        float pan = std::sin(static_cast<float>(2.0 * 3.14159265 * t / totalT));
+        float lvlL = 0.35f * (1.0f - pan);
+        float lvlR = 0.35f * (1.0f + pan);
+        sr::AnalysisFrame fr{};
+        fr.level[0] = lvlL;
+        fr.level[1] = lvlR;
+        fr.active = true;
+        fr.peak[0] = lvlL >= 0.5f;
+        fr.peak[1] = lvlR >= 0.5f;
+        {
+            std::lock_guard<std::mutex> lk(meters.mu);
+            meters.frame = fr;
+        }
+        Sleep(20);
+
+        if (i / 25 != lastPrint && i > 25) {
+            lastPrint = i / 25;
+            float expected = pan * 90.0f;
+            std::vector<float> arrows = overlay.DebugArrowAngles();
+            float bestErr = 180.0f, bestA = 0;
+            for (float a : arrows) {
+                float d = std::fabs(ShortestAngDist(a, expected));
+                if (d < bestErr) { bestErr = d; bestA = a; }
+            }
+            std::printf("t=%4.1fs pan=%+.2f expected=%+5.1f measured=%+5.1f err=%4.1f\n",
+                        t, pan, expected, bestA, bestErr);
+            errSum += bestErr;
+            ++errN;
+        }
+    }
+    overlay.Stop();
+    double meanErr = errN ? errSum / errN : 180.0;
+    bool ok = meanErr < 12.0 && errN > 0;
+    std::printf("pan-sweep: mean abs error %.1f deg over %d samples -> %s\n", meanErr,
+                errN, ok ? "PASS" : "FAIL");
+    return ok ? 0 : 1;
+}
 } // namespace
 
 // --simulate orbit: one source rotates 360 deg over ~8 s; the tracked arrow
@@ -1552,6 +1636,8 @@ int wmain(int argc, wchar_t** argv) {
             rc = RunOrbitTest(cfg, false);
         } else if (simScenario == L"dual-orbit") {
             rc = RunOrbitTest(cfg, true);
+        } else if (simScenario == L"pan-sweep") {
+            rc = RunPanSweep(cfg);
         } else {
             sr::SimScenario sc = sr::SimSweep;
             if (simScenario == L"sweep") sc = sr::SimSweep;

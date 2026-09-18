@@ -18,7 +18,8 @@ namespace sr {
 struct SharedMeters {
     std::mutex mu;
     AnalysisFrame frame;
-    uint8_t classes[8] = {}; // SoundClass per channel (classification milestone)
+    uint8_t classes[8] = {};       // SoundClass per channel (classification milestone)
+    uint32_t srcChannels = 8;      // actual capture channels (2 = stereo: pan-tracking mode)
 };
 
 // Live-downmix snapshot: read once per render buffer (~100 Hz), written by
