@@ -322,6 +322,9 @@ int RunApp(sr::AppConfig& cfg, const std::wstring& configPath, bool trayMode,
     hooks.cfg = &cfg;
     hooks.configPath = configPath;
     hooks.onExit = [&] { SetEvent(g_quit); };
+    hooks.statusLevel = [&] {
+        return pipeline.running ? 0 : (pipeline.lastError.empty() ? 1 : 2);
+    };
     hooks.statusText = [&]() -> std::wstring {
         if (!pipeline.running)
             return L"等待设备 Waiting for device\r\n" + pipeline.lastError;
@@ -567,6 +570,68 @@ struct GuiTestCtx {
     int lines = 0;
 };
 
+// Renders a (possibly hidden) window to a 24-bit BMP via PrintWindow.
+bool SnapshotWindowToBmp(HWND hwnd, const std::wstring& path) {
+    RECT rc;
+    GetWindowRect(hwnd, &rc);
+    int w = rc.right - rc.left, h = rc.bottom - rc.top;
+    HDC screen = GetDC(nullptr);
+    HDC mem = CreateCompatibleDC(screen);
+    HBITMAP bmp = CreateCompatibleBitmap(screen, w, h);
+    HGDIOBJ old = SelectObject(mem, bmp);
+    // hidden windows never paint; park the window fully off-screen and show
+    // it (invisible to the user), so PrintWindow gets real content
+    SetWindowPos(hwnd, nullptr, -32000, -32000, 0, 0,
+                 SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+    ShowWindow(hwnd, SW_SHOWNA);
+    RedrawWindow(hwnd, nullptr, nullptr, RDW_INVALIDATE | RDW_ALLCHILDREN | RDW_UPDATENOW);
+    MSG m;
+    while (PeekMessageW(&m, hwnd, 0, 0, PM_REMOVE)) DispatchMessageW(&m);
+    // WM_PRINT renders the window tree ourselves - reliable without any DWM
+    // surface (PrintWindow returns black for off-screen/hidden windows here).
+    SendMessageW(hwnd, WM_PRINT, reinterpret_cast<WPARAM>(mem),
+                 PRF_CHILDREN | PRF_CLIENT | PRF_NONCLIENT | PRF_ERASEBKGND);
+    BOOL ok = TRUE;
+    ShowWindow(hwnd, SW_HIDE);
+
+    BITMAPINFOHEADER bi = {};
+    bi.biSize = sizeof(bi);
+    bi.biWidth = w;
+    bi.biHeight = -h;
+    bi.biPlanes = 1;
+    bi.biBitCount = 24;
+    std::vector<uint8_t> px(static_cast<size_t>(w) * h * 3);
+    size_t rowStride = (static_cast<size_t>(w) * 3 + 3) & ~size_t(3); // DIB rows are 4-aligned
+    px.assign(rowStride * h, 0);
+    int rows = GetDIBits(mem, bmp, 0, h, px.data(), reinterpret_cast<BITMAPINFO*>(&bi),
+                         DIB_RGB_COLORS);
+    if (rows == 0) { /* fall through to file write failure below */ }
+    SelectObject(mem, old);
+    DeleteObject(bmp);
+    DeleteDC(mem);
+    ReleaseDC(nullptr, screen);
+    if (!ok || rows == 0) return false;
+
+    FILE* f = nullptr;
+    if (_wfopen_s(&f, path.c_str(), L"wb") != 0 || !f) return false;
+    BITMAPFILEHEADER fh = {};
+    fh.bfType = 0x4D42;
+    fh.bfSize = sizeof(fh) + sizeof(bi) + (uint32_t)px.size();
+    fh.bfOffBits = sizeof(fh) + sizeof(bi);
+    BITMAPINFOHEADER bih = bi;
+    bih.biHeight = h;
+    fwrite(&fh, 1, sizeof(fh), f);
+    fwrite(&bih, 1, sizeof(bih), f);
+    std::vector<uint8_t> row(rowStride);
+    for (int r = h - 1; r >= 0; --r) {
+        std::memcpy(row.data(), px.data() + static_cast<size_t>(r) * rowStride,
+                    rowStride);
+        fwrite(row.data(), 1, rowStride, f);
+    }
+    fclose(f);
+    return true;
+}
+
 int RunGuiTest() {
     using namespace sr; // control IDs
     sr::ComInit com;
@@ -587,6 +652,7 @@ int RunGuiTest() {
         lastDevChanged = devChanged;
     };
     hooks.onExit = [&] { SetEvent(testQuit); };
+    hooks.statusLevel = [] { return 1; };
     hooks.statusText = [] { return std::wstring(L"test status"); };
 
     sr::Gui gui;
@@ -672,6 +738,10 @@ int RunGuiTest() {
     bool exitOk = WaitForSingleObject(testQuit, 500) == WAIT_OBJECT_0;
     ResetEvent(testQuit);
 
+    // dark-theme screenshot of the HIDDEN window (PrintWindow)
+    bool shotOk = SnapshotWindowToBmp(hwnd, L"build\\gui-dark.bmp");
+    std::printf("gui screenshot: build\\gui-dark.bmp (%s)\n", shotOk ? "written" : "FAILED");
+
     // GUI window must keep a normal taskbar button (not a tool window)
     LONG guiEx = GetWindowLongW(hwnd, GWL_EXSTYLE);
     bool taskbarOk = (guiEx & WS_EX_TOOLWINDOW) == 0;
@@ -681,7 +751,8 @@ int RunGuiTest() {
         std::printf("  [%s] %s\n", pass ? "PASS" : "FAIL", name);
         if (!pass) ok = false;
     };
-    check("control count 56 (incl. Exit button)", ectx.count == 56);
+    check("control count 65 (dark-theme layout)", ectx.count == 65);
+    check("gui screenshot", shotOk);
     check("exit button signals quit event", exitOk);
     check("taskbar button present (no WS_EX_TOOLWINDOW)", taskbarOk);
     check("apply callback fired once", applyCalls == 1);
@@ -748,6 +819,7 @@ int RunSimulateGui(sr::AppConfig cfg) {
     hooks.cfg = &cfg;
     hooks.configPath = configPath;
     hooks.onApply = [](bool) {};
+    hooks.statusLevel = [] { return 0; };
     hooks.statusText = [] { return std::wstring(L"simulate-gui"); };
     sr::Gui gui;
     bool guiOk = gui.Create(hooks, /*hidden=*/true);
@@ -855,6 +927,10 @@ bool CaptureScreenRegion(int x, int y, int w, int h, const std::wstring& path,
 
 int RunOnscreenProof(sr::AppConfig cfg) {
     cfg.overlay.enabled = true;
+    // park the proof radar left of center so a concurrently running production
+    // instance's overlay can't overlap our pixel assertions
+    cfg.overlay.offsetX = -GetSystemMetrics(SM_CXSCREEN) / 4;
+    cfg.overlay.offsetY = 0;
     {
         std::lock_guard<std::mutex> lk(sr::g_overlay.mu);
         sr::g_overlay.cfg = cfg.overlay;
@@ -864,8 +940,8 @@ int RunOnscreenProof(sr::AppConfig cfg) {
     sr::Overlay overlay;
     overlay.Start(cfg.overlay, &meters, g_quit, /*visible=*/true);
 
-    // deterministic meter feed: FL+BR arrows red, LFE brightens the ring so it
-    // stays detectable even on a white background
+    // deterministic meter feed: FL+BR arrows (red). Nothing else is drawn near
+    // the center - the proof asserts the center stays untouched.
     {
         std::lock_guard<std::mutex> lk(meters.mu);
         for (int c = 0; c < 8; ++c) {
@@ -874,8 +950,7 @@ int RunOnscreenProof(sr::AppConfig cfg) {
         }
         meters.frame.level[0] = 0.8f; // FL
         meters.frame.level[5] = 0.8f; // BR
-        meters.frame.level[3] = 0.9f; // LFE -> ring bright
-        meters.frame.peak[0] = meters.frame.peak[5] = meters.frame.peak[3] = true;
+        meters.frame.peak[0] = meters.frame.peak[5] = true;
         meters.frame.active = true;
     }
 
@@ -906,42 +981,38 @@ int RunOnscreenProof(sr::AppConfig cfg) {
     };
     int lx = box, ly = box; // region-local center
 
-    // 1) ring present in the live capture: brighter than radial neighbors
-    int ringHits = 0;
-    const int N = 36;
-    for (int k = 0; k < N; ++k) {
-        double a = k * 2.0 * 3.14159265358979 / N;
-        auto at = [&](double rr) {
-            return lum(rgb, lx + static_cast<int>(std::sin(a) * rr),
-                       ly - static_cast<int>(std::cos(a) * rr));
-        };
-        double on = at(r), in = at(r - 7), out = at(r + 7);
-        // ring has a dark underlay + light core: visible (and detectable) on
-        // any background -> absolute radial contrast
-        double nb = (in + out) * 0.5;
-        if (std::fabs(on - nb) > 6.0) ++ringHits;
-    }
-    // 2) arrows: FL (330 deg) and BR (135 deg), brightest of a 7x7 just outside
+    // 1) arrows present at the right angles: FL (-30 deg) and BR (135 deg).
+    //    Pick the most RED-SATURATED pixel in a 7x7 box (max luminance would
+    //    pick washed-out glow over a bright background).
     auto reddish = [&](double deg) {
         double a = deg * 3.14159265358979 / 180.0;
         int px = lx + static_cast<int>(std::sin(a) * (r + 8));
         int py = ly - static_cast<int>(std::cos(a) * (r + 8));
-        double best = 0;
+        double bestSat = -1e9;
         int br = 0, bg = 0, bb = 0;
         for (int dy = -3; dy <= 3; ++dy)
             for (int dx2 = -3; dx2 <= 3; ++dx2) {
                 size_t i = (static_cast<size_t>(py + dy) * W + px + dx2) * 3;
-                double l = 0.114 * rgb[i] + 0.587 * rgb[i + 1] + 0.299 * rgb[i + 2];
-                if (l > best) {
-                    best = l;
-                    bb = rgb[i];
-                    bg = rgb[i + 1];
-                    br = rgb[i + 2];
+                int B = rgb[i], G = rgb[i + 1], R = rgb[i + 2];
+                double sat = R - (G + B) / 2.0;
+                if (sat > bestSat) {
+                    bestSat = sat;
+                    br = R; bg = G; bb = B;
                 }
             }
-        return br > bg + 25 && br > bb + 25; // level 0.8 > high threshold -> red
+        bool red = bestSat > 40.0 && br > 150;
+        return red;
     };
-    bool arrowFL = reddish(330.0), arrowBR = reddish(135.0);
+    bool arrowFL = reddish(-30.0), arrowBR = reddish(135.0);
+
+    // 2) center stays 100% see-through: center 20x20 must match the
+    //    overlay-off capture almost exactly
+    double centerDiff = 0;
+    for (int py = ly - 10; py < ly + 10; ++py)
+        for (int px = lx - 10; px < lx + 10; ++px)
+            centerDiff += std::fabs(lum(rgb, px, py) - lum(rgbOff, px, py));
+    centerDiff /= 400.0;
+    bool centerClear = centerDiff < 2.0;
 
     // 3) overlay-gone diff: changed pixels between the two captures
     int diffPixels = 0;
@@ -951,14 +1022,13 @@ int RunOnscreenProof(sr::AppConfig cfg) {
             if (d > 10.0) ++diffPixels;
         }
 
-    bool ringOk = ringHits >= N / 2;
     bool diffOk = diffPixels > 200;
-    bool ok = capOk && ringOk && arrowFL && arrowBR && diffOk;
+    bool ok = capOk && arrowFL && arrowBR && centerClear && diffOk;
 
-    std::printf("onscreen-proof: capture=%s ringHits=%d/%d arrows FL=%s BR=%s "
+    std::printf("onscreen-proof: capture=%s arrows FL=%s BR=%s centerDiff=%.2f "
                 "diffPixels=%d -> %s\n",
-                capOk ? "ok" : "FAIL", ringHits, N, arrowFL ? "red" : "NO",
-                arrowBR ? "red" : "NO", diffPixels, ok ? "PASS" : "FAIL");
+                capOk ? "ok" : "FAIL", arrowFL ? "red" : "NO", arrowBR ? "red" : "NO",
+                centerDiff, diffPixels, ok ? "PASS" : "FAIL");
     std::printf("  (overlay hwnd %s, %llu frames drawn)\n", hwnd ? "ok" : "MISSING",
                 (unsigned long long)overlay.FramesDrawn());
     return ok ? 0 : 1;
