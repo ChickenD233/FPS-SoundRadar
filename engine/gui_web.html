@@ -200,14 +200,6 @@ footer {
 </div>
 
 <div class="card">
-  <h2>模式 MODE</h2>
-  <div class="seg">
-    <button id="modeMono" class="on">右耳单声道</button>
-    <button id="modeStereo">立体声</button>
-  </div>
-</div>
-
-<div class="card">
   <h2>声纹样式 OVERLAY</h2>
   <div class="row"><label class="tgl-label">显示声纹</label>
     <label class="tgl"><input type="checkbox" id="ovOn"><span class="tr"></span></label>
@@ -288,12 +280,7 @@ bindSlider('posY', v => v + '%');
 bindSlider('fx', v => v + '%');
 for (let i = 0; i < 8; i++) bindSlider('w' + i, v => (v/100).toFixed(2));
 
-function setMode(m) {
-  $('modeMono').classList.toggle('on', m !== 'stereo');
-  $('modeStereo').classList.toggle('on', m === 'stereo');
-}
-$('modeMono').onclick = () => setMode('right-mono');
-$('modeStereo').onclick = () => setMode('stereo');
+function setMode(m) { /* mode UI removed: always stereo */ }
 
 function fillSelect(el, names) {
   const cur = el.selectedIndex;
@@ -332,7 +319,7 @@ function applyState(s) {
 
 function collectConfig() {
   return {
-    mode: $('modeStereo').classList.contains('on') ? 'stereo' : 'right-mono',
+    mode: 'stereo', // downmix mode UI removed; stereo passthrough always
     overlay_enabled: $('ovOn').checked,
     classify_enabled: $('clsOn').checked,
     autostart: $('autoOn').checked,

@@ -505,6 +505,8 @@ void Gui::OnBridgeMessage(const wchar_t* jsonW) {
     if (cmd == "drag") {
         // frameless title-bar drag: follow the cursor on a timer. (A modal
         // HTCAPTION move loop would swallow the in-flight click's mouse-up and
+        // wedge WebView2 input. End via WM_LBUTTONUP + async-key fallback.)
+        SetCapture(hwnd_);
         // leave the page unclickable.)
         GetCursorPos(&dragCursor_);
         SetTimer(hwnd_, kDragTimer, 30, nullptr);
@@ -676,8 +678,11 @@ LRESULT Gui::HandleMessage(UINT msg, WPARAM wp, LPARAM lp) {
                 KillTimer(hwnd_, kFitTimer);
                 MeasureAndFit();
             } else if (wp == kDragTimer) {
+                // End on async state OR via WM_LBUTTONUP below; remote
+                // sessions (ToDesk) may not report async key state.
                 if ((GetAsyncKeyState(VK_LBUTTON) & 0x8000) == 0) {
                     KillTimer(hwnd_, kDragTimer);
+                    ReleaseCapture();
                 } else {
                     POINT cur;
                     GetCursorPos(&cur);
@@ -692,6 +697,11 @@ LRESULT Gui::HandleMessage(UINT msg, WPARAM wp, LPARAM lp) {
             return 0;
         case kMsgGuiActivate:
             Show();
+            return 0;
+        case WM_LBUTTONUP:
+        case WM_CAPTURECHANGED:
+            KillTimer(hwnd_, kDragTimer);
+            ReleaseCapture();
             return 0;
         case WM_CLOSE:
             Hide(); // close = minimize to tray, never exit
