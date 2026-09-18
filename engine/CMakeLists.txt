@@ -28,6 +28,7 @@ add_executable(SoundRadar
     classify.cpp
     measure.cpp
     pantest.cpp
+    devicedefault.cpp
     tray.cpp
     simulate.cpp
     gui2.cpp

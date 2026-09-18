@@ -23,6 +23,7 @@
 #include "capture.h"
 #include "classify.h"
 #include "config.h"
+#include "devicedefault.h"
 #include "downmix.h"
 #include "gui2.h"
 #include "log.h"
@@ -95,6 +96,7 @@ void PrintUsage() {
         "  --measure              latency report (needs SoundRadar driver + output)\n"
         "  --measure-loopback     click-train round-trip through the SoundRadar driver\n"
         "  --pan-test [seconds]   play per-channel test tones on the SoundRadar speaker\n"
+        "  --set-default          make the capture device's render twin the default output\n"
         "  --list-devices         list capture and render endpoints\n"
         "  --output <name>        render endpoint name substring\n"
         "  --mode <m>             right-mono | stereo (overrides config)\n"
@@ -702,11 +704,11 @@ int RunGuiTest() {
         L"+';checks='+document.querySelectorAll('input[type=checkbox]').length"
         L"+';buttons='+document.querySelectorAll('button').length)", inv);
     std::printf("  dom inventory: %s\n", sr::ToUtf8(inv).c_str());
-    check("dom: 15 sliders, 2 selects, 3 toggles, 8 buttons",
+    check("dom: 15 sliders, 2 selects, 3 toggles, 9 buttons",
           evalOk && inv.find(L"ranges=15") != std::wstring::npos &&
           inv.find(L"selects=2") != std::wstring::npos &&
           inv.find(L"checks=3") != std::wstring::npos &&
-          inv.find(L"buttons=8") != std::wstring::npos);
+          inv.find(L"buttons=9") != std::wstring::npos);
 
     // auto-fit: content must fit the frameless window without a scrollbar.
     // The fit timer fires 400 ms after page-ready; pump past it first.
@@ -810,6 +812,29 @@ int RunGuiTest() {
         check("g_analysis fade 350", sr::g_analysis.cfg.fadeMs == 350);
     }
 
+    // locate the Apply button in CSS px now; the real click happens below
+    // while the window is visible (WebView2 input needs real input events)
+    double btnCx = 0, btnCy = 0;
+    {
+        std::wstring rectJson;
+        bool rectOk = gui.EvalJson(
+            L"JSON.stringify(document.getElementById('btnApply').getBoundingClientRect())",
+            rectJson);
+        auto numAfter = [&](const wchar_t* key) -> double {
+            size_t p = rectJson.find(key);
+            if (p == std::wstring::npos) return 0;
+            return _wtof(rectJson.c_str() + p + wcslen(key));
+        };
+        double bx = rectOk ? numAfter(L"x\\\":") : 0;
+        double by = rectOk ? numAfter(L"y\\\":") : 0;
+        double bw = rectOk ? numAfter(L"width\\\":") : 0;
+        double bh = rectOk ? numAfter(L"height\\\":") : 0;
+        btnCx = bx + bw / 2;
+        btnCy = by + bh / 2;
+        std::printf("  apply button rect=(%.0f,%.0f %.0fx%.0f)\n", bx, by, bw, bh);
+        check("apply button located", rectOk && bw > 0 && bh > 0);
+    }
+
     // exit command -> quit event
     gui.InjectBridgeMessage(L"{\"cmd\":\"exit\"}");
     t0 = GetTickCount64();
@@ -830,6 +855,25 @@ int RunGuiTest() {
         gui.PumpMessages();
         Sleep(20);
     }
+
+    // real click on the Apply button through the page's own DOM handler.
+    // (Synthetic input is ignored on remote-desktop sessions like ToDesk, and
+    // posted WM_LBUTTON* never reaches WebView2's input pipeline; el.click()
+    // exercises the same button -> onclick -> bridge -> C++ path.)
+    {
+        int clicksBefore = applyCalls;
+        std::wstring clickRes;
+        bool clickEval = gui.EvalJson(
+            L"document.getElementById('btnApply').click();'clicked'", clickRes);
+        uint64_t t1 = GetTickCount64();
+        while (applyCalls == clicksBefore && GetTickCount64() - t1 < 3000) {
+            gui.PumpMessages();
+            Sleep(10);
+        }
+        std::printf("  dom click on 应用 Apply: eval=%s\n", clickEval ? "ok" : "FAIL");
+        check("DOM click on 应用 Apply fires apply", applyCalls == clicksBefore + 1);
+    }
+
     bool shotOk = gui.CapturePng(L"build\\gui-modern.png");
     gui.Hide();
     std::printf("  gui screenshot: build\\gui-modern.png (%s)\n", shotOk ? "written" : "FAILED");
@@ -1009,6 +1053,7 @@ int RunOnscreenProof(sr::AppConfig cfg) {
     bool capOk = false, arrowFL = false, arrowBR = false;
     double centerDiff = 1e9;
     int diffPixels = 0;
+    int lastBandDiff = 0;
 
     // retry: the user's desktop may change between the two captures
     for (int attempt = 0; attempt < 3; ++attempt) {
@@ -1034,14 +1079,19 @@ int RunOnscreenProof(sr::AppConfig cfg) {
 
         std::vector<uint8_t> rgb;
         capOk = CaptureScreenRegion(cx - box, cy - box, W, W,
-                                    L"build\onscreen-proof.bmp", rgb);
+                                    L"build\\onscreen-proof.bmp", rgb);
+        // edge bands live at the screen edges: capture the top-left FL segment
+        std::vector<uint8_t> bandOn;
+        CaptureScreenRegion(20, 0, 200, 40, L"build\\proof-band-on.bmp", bandOn);
 
         // background-independent diff: capture again with the overlay gone
         overlay.Stop();
         Sleep(400);
         std::vector<uint8_t> rgbOff;
-        CaptureScreenRegion(cx - box, cy - box, W, W, L"build\onscreen-proof-off.bmp",
+        CaptureScreenRegion(cx - box, cy - box, W, W, L"build\\onscreen-proof-off.bmp",
                             rgbOff);
+        std::vector<uint8_t> bandOff;
+        CaptureScreenRegion(20, 0, 200, 40, L"build\\proof-band-off.bmp", bandOff);
 
         auto lum = [&](const std::vector<uint8_t>& buf, int px, int py) -> double {
             size_t i = (static_cast<size_t>(py) * W + px) * 3;
@@ -1088,10 +1138,20 @@ int RunOnscreenProof(sr::AppConfig cfg) {
                 double d = std::fabs(lum(rgb, px, py) - lum(rgbOff, px, py));
                 if (d > 10.0) ++diffPixels;
             }
+        // 4) edge band: top-left strip must change too (FL band)
+        int bandDiff = 0;
+        for (size_t i = 0; i + 2 < bandOn.size(); i += 3) {
+            double d = 0.0;
+            for (int k = 0; k < 3; ++k)
+                d += std::fabs(static_cast<int>(bandOn[i + k]) - bandOff[i + k]);
+            if (d > 30.0) ++bandDiff;
+        }
+        lastBandDiff = bandDiff;
 
         if (attempt > 0)
             std::printf("  (retry %d: desktop changed between captures)\n", attempt);
-        if (capOk && arrowFL && arrowBR && centerDiff < 2.0 && diffPixels > 200) {
+        if (capOk && arrowFL && arrowBR && centerDiff < 2.0 && diffPixels > 200 &&
+            bandDiff > 30) {
             std::printf("  (overlay hwnd %s, %llu frames drawn)\n",
                         hwnd ? "ok" : "MISSING",
                         (unsigned long long)overlay.FramesDrawn());
@@ -1099,11 +1159,12 @@ int RunOnscreenProof(sr::AppConfig cfg) {
         }
     }
 
-    bool ok = capOk && arrowFL && arrowBR && centerDiff < 2.0 && diffPixels > 200;
+    bool ok = capOk && arrowFL && arrowBR && centerDiff < 2.0 && diffPixels > 200 &&
+              lastBandDiff > 30;
     std::printf("onscreen-proof: capture=%s arrows FL=%s BR=%s centerDiff=%.2f "
-                "diffPixels=%d -> %s\n",
+                "diffPixels=%d bandPixels=%d -> %s\n",
                 capOk ? "ok" : "FAIL", arrowFL ? "red" : "NO", arrowBR ? "red" : "NO",
-                centerDiff, diffPixels, ok ? "PASS" : "FAIL");
+                centerDiff, diffPixels, lastBandDiff, ok ? "PASS" : "FAIL");
     return ok ? 0 : 1;
 }
 
@@ -1291,6 +1352,8 @@ int wmain(int argc, wchar_t** argv) {
     bool selftest = false, measure = false, measureLoopback = false, list = false;
     bool trayMode = false, overlayTest = false, classifyTest = false;
     bool guiTest = false, simGui = false, diag = false, onscreenProof = false;
+    bool setDefault = false;
+    std::wstring setDefaultNeedle; // optional explicit render-device substring
     int panTestSeconds = -1;
 
     std::wstring argLine;
@@ -1320,6 +1383,10 @@ int wmain(int argc, wchar_t** argv) {
             panTestSeconds = 0;
             if (i + 1 < argc && argv[i + 1][0] != L'-')
                 panTestSeconds = _wtoi(argv[++i]);
+        }
+        else if (a == L"--set-default") {
+            setDefault = true;
+            if (i + 1 < argc && argv[i + 1][0] != L'-') setDefaultNeedle = argv[++i];
         }
         else if (a == L"--list-devices") list = true;
         else if (a == L"--diag") diag = true;
@@ -1365,6 +1432,28 @@ int wmain(int argc, wchar_t** argv) {
     if (measure) return sr::RunMeasure(cfg.outputDevice, cfg.captureDevice);
     if (measureLoopback) return sr::RunMeasureLoopback();
     if (panTestSeconds >= 0) return sr::RunPanTest(panTestSeconds);
+    if (setDefault) {
+        sr::ComInit com;
+        std::printf("default render before: %s\n", sr::ToUtf8(sr::DefaultRenderName()).c_str());
+        std::wstring needle = setDefaultNeedle;
+        if (needle.empty()) {
+            auto cands = sr::SelectCaptureEndpoints(cfg.captureDevice);
+            if (cands.empty()) {
+                std::printf("no capture endpoint matches the capture_device rule\n");
+                return 1;
+            }
+            std::printf("capture selected : %s\n", sr::ToUtf8(cands.front().name).c_str());
+            needle = sr::RenderCounterpartNeedle(cands.front().name);
+        }
+        std::printf("setting default  : render device matching \"%s\"\n",
+                    sr::ToUtf8(needle).c_str());
+        if (needle.empty() || !sr::SetDefaultRenderDevice(needle)) {
+            std::printf("FAILED (see %%APPDATA%%\\SoundRadar\\log.txt)\n");
+            return 1;
+        }
+        std::printf("default render after : %s\n", sr::ToUtf8(sr::DefaultRenderName()).c_str());
+        return 0;
+    }
     if (diag) return RunDiag(cfg);
 
     if (trayMode || argc == 1) FreeConsole(); // autostart or Explorer double-click: no console window

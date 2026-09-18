@@ -74,6 +74,7 @@ private:
     bool pageReady_ = false;
     bool resetPending_ = false; // push default weights on next state
     std::vector<std::wstring> devIn_, devOut_; // dropdown name lists
+    POINT dragCursor_ = {};                    // frameless drag tracking
 
     struct ICoreWebView2* webview_ = nullptr;
     struct ICoreWebView2Controller* controller_ = nullptr;

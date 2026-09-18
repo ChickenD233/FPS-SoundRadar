@@ -196,6 +196,7 @@ footer {
   <h2>设备 DEVICES</h2>
   <div class="row"><label>输入/捕获</label><select id="selIn"></select></div>
   <div class="row"><label>输出</label><select id="selOut"></select></div>
+  <div class="row"><label></label><button class="act ghost" id="btnSetDefault" style="flex:1">设为默认输出（系统声音走该设备）</button></div>
 </div>
 
 <div class="card">
@@ -353,6 +354,7 @@ $('btnExit').onclick = () => post({cmd:'exit'});
 $('resetW').onclick = () => post({cmd:'resetWeights'});
 $('btnTitleMin').onclick = () => post({cmd:'minimize'});
 $('btnTitleClose').onclick = () => post({cmd:'minimize'});
+$('btnSetDefault').onclick = () => post({cmd:'setDefault', selIn: $('selIn').selectedIndex});
 // frameless window drag (WebView2 does not implement -webkit-app-region itself)
 $('titlebar').addEventListener('mousedown', e => {
   if (e.target.closest('.tbtn')) return;

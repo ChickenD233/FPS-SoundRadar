@@ -175,8 +175,10 @@ private:
 };
 
 // Green -> yellow -> red, smoothly interpolated (no hard jumps at thresholds).
+// Alpha floor ~0.75 while active: arrows must be readable even when quiet.
 D2D1_COLOR_F LevelColor(float lvl, const OverlayConfig& cfg, float alphaScale = 1.0f) {
-    float a = (lvl <= 0.0f) ? 0.0f : (lvl > 1.0f ? 1.0f : lvl);
+    float cl = (lvl > 1.0f) ? 1.0f : lvl;
+    float a = (lvl <= 0.0f) ? 0.0f : (0.75f + 0.25f * cl);
     a *= alphaScale;
     const float G[3] = { 0.20f, 1.00f, 0.30f };
     const float Y[3] = { 1.00f, 0.85f, 0.10f };
@@ -214,7 +216,7 @@ struct SceneResources {
 // Tapered chevron in radar-local coords pointing up (0 deg): tip outside the
 // ring, base on the ring, inner notch. Rotated per arrow at draw time.
 ComPtr<ID2D1PathGeometry> MakeArrow(ID2D1Factory* factory, float cx, float cy, float r) {
-    const float halfW = 10.0f, tipLen = 17.0f, notch = 6.0f;
+    const float halfW = 14.0f, tipLen = 24.0f, notch = 8.0f; // ~1.4x baseline
     ComPtr<ID2D1PathGeometry> geo;
     if (FAILED(factory->CreatePathGeometry(&geo))) return nullptr;
     ComPtr<ID2D1GeometrySink> sink;
@@ -272,14 +274,14 @@ void DrawBand(ID2D1RenderTarget* rt, const SceneResources& res, const OverlayCon
               float fx) {
     if (lvl <= 0.02f) return; // zero level = invisible
     const float profile[5] = { 0.20f, 0.55f, 1.0f, 0.55f, 0.20f };
-    float t = 2.0f + 14.0f * (lvl > 1.0f ? 1.0f : lvl);
+    float t = 6.0f + 20.0f * (lvl > 1.0f ? 1.0f : lvl); // 6px base, grows with level
     bool horiz = (edge == 0 || edge == 2);
     float lo = horiz ? span.left : span.top;
     float hi = horiz ? span.right : span.bottom;
     float len = hi - lo;
     for (int pass = 0; pass < 2; ++pass) {
-        float tPass = (pass == 0) ? t + 8.0f * fx : t; // pass 0 = glow
-        float aMul = (pass == 0) ? 0.25f * fx : 0.8f;
+        float tPass = (pass == 0) ? t + 10.0f * fx : t; // pass 0 = glow
+        float aMul = (pass == 0) ? 0.35f * fx : 0.9f;
         if (aMul <= 0.0f) continue;
         for (int i = 0; i < 5; ++i) {
             float a0 = lo + len * i / 5.0f, a1 = lo + len * (i + 1) / 5.0f;
