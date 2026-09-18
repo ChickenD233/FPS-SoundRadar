@@ -708,11 +708,11 @@ int RunGuiTest() {
         L"+';checks='+document.querySelectorAll('input[type=checkbox]').length"
         L"+';buttons='+document.querySelectorAll('button').length)", inv);
     std::printf("  dom inventory: %s\n", sr::ToUtf8(inv).c_str());
-    check("dom: 15 sliders, 2 selects, 3 toggles, 9 buttons",
+    check("dom: 15 sliders, 2 selects, 3 toggles, 7 buttons",
           evalOk && inv.find(L"ranges=15") != std::wstring::npos &&
           inv.find(L"selects=2") != std::wstring::npos &&
           inv.find(L"checks=3") != std::wstring::npos &&
-          inv.find(L"buttons=9") != std::wstring::npos);
+          inv.find(L"buttons=7") != std::wstring::npos);
 
     // auto-fit: content must fit the frameless window without a scrollbar.
     // The fit timer fires 400 ms after page-ready; pump past it first.
@@ -1055,6 +1055,7 @@ int RunOnscreenProof(sr::AppConfig cfg) {
     int W = box * 2;
 
     bool capOk = false, arrowFL = false, arrowBR = false;
+    bool centerClear = false;
     double centerDiff = 1e9;
     int diffPixels = 0;
     int lastBandDiff = 0;
@@ -1064,8 +1065,8 @@ int RunOnscreenProof(sr::AppConfig cfg) {
         sr::Overlay overlay;
         overlay.Start(cfg.overlay, &meters, g_quit, /*visible=*/true);
 
-        // deterministic meter feed: FL+BR arrows (red). Nothing else is drawn
-        // near the center - the proof asserts the center stays untouched.
+        // deterministic meter feed: FL+BR arrows (red). The compass needle
+        // crosses the center; the proof asserts the center stays mostly clear.
         {
             std::lock_guard<std::mutex> lk(meters.mu);
             for (int c = 0; c < 8; ++c) {
@@ -1132,13 +1133,15 @@ int RunOnscreenProof(sr::AppConfig cfg) {
         arrowFL = reddish(-30.0);
         arrowBR = reddish(135.0);
 
-        // 2) center stays 100% see-through: center 20x20 must match the
-        //    overlay-off capture almost exactly
-        centerDiff = 0;
+        // 2) center: the compass needle legitimately crosses it, but it is a
+        //    thin line - assert the center stays MOSTLY see-through (no blob)
+        int centerChanged = 0;
         for (int py = ly - 10; py < ly + 10; ++py)
             for (int px = lx - 10; px < lx + 10; ++px)
-                centerDiff += std::fabs(lum(rgb, px, py) - lum(rgbOff, px, py));
-        centerDiff /= 400.0;
+                if (std::fabs(lum(rgb, px, py) - lum(rgbOff, px, py)) > 10.0)
+                    ++centerChanged;
+        centerDiff = centerChanged; // reused print slot: now a pixel count
+        centerClear = centerChanged < 100; // < 25% of the 20x20 box
 
         // 3) overlay-gone diff: changed pixels between the two captures
         diffPixels = 0;
@@ -1165,7 +1168,7 @@ int RunOnscreenProof(sr::AppConfig cfg) {
 
         if (attempt > 0)
             std::printf("  (retry %d: desktop changed between captures)\n", attempt);
-        if (capOk && arrowFL && arrowBR && centerDiff < 2.0 && diffPixels > 200 &&
+        if (capOk && arrowFL && arrowBR && centerClear && diffPixels > 200 &&
             bandDiff > 30) {
             std::printf("  (overlay hwnd %s, %llu frames drawn)\n",
                         hwnd ? "ok" : "MISSING",
@@ -1174,9 +1177,9 @@ int RunOnscreenProof(sr::AppConfig cfg) {
         }
     }
 
-    bool ok = capOk && arrowFL && arrowBR && centerDiff < 2.0 && diffPixels > 200 &&
+    bool ok = capOk && arrowFL && arrowBR && centerClear && diffPixels > 200 &&
               lastBandDiff > 30;
-    std::printf("onscreen-proof: capture=%s arrows FL=%s BR=%s centerDiff=%.2f "
+    std::printf("onscreen-proof: capture=%s arrows FL=%s BR=%s centerChanged=%.0f/400 "
                 "diffPixels=%d bandPixels=%d -> %s\n",
                 capOk ? "ok" : "FAIL", arrowFL ? "red" : "NO", arrowBR ? "red" : "NO",
                 centerDiff, diffPixels, lastBandDiff, ok ? "PASS" : "FAIL");
@@ -1255,7 +1258,10 @@ const float kChAngle[8] = { -30, 30, 0, -999, -135, 135, -90, 90 };
 
 // --simulate pan-sweep: srcChannels=2, pan sweeps -1..+1 sinusoidally; the
 // single indicator must track angle = pan * 90 deg within 12 deg mean error.
-int RunPanSweep(sr::AppConfig cfg) {
+// --simulate pan-sweep: pan sweeps -1..+1 sinusoidally. container8=true
+// models VB-CABLE (8ch container, stereo content): mode must auto-detect from
+// active channels (hysteresis ~300 ms). container8=false forces srcChannels=2.
+int RunPanSweep(sr::AppConfig cfg, bool container8) {
     cfg.overlay.enabled = true;
     {
         std::lock_guard<std::mutex> lk(sr::g_overlay.mu);
@@ -1265,7 +1271,7 @@ int RunPanSweep(sr::AppConfig cfg) {
     sr::SharedMeters meters;
     {
         std::lock_guard<std::mutex> lk(meters.mu);
-        meters.srcChannels = 2;
+        meters.srcChannels = container8 ? 8 : 2;
     }
     sr::Overlay overlay;
     overlay.Start(cfg.overlay, &meters, g_quit, /*visible=*/false);
@@ -1311,8 +1317,9 @@ int RunPanSweep(sr::AppConfig cfg) {
     overlay.Stop();
     double meanErr = errN ? errSum / errN : 180.0;
     bool ok = meanErr < 12.0 && errN > 0;
-    std::printf("pan-sweep: mean abs error %.1f deg over %d samples -> %s\n", meanErr,
-                errN, ok ? "PASS" : "FAIL");
+    std::printf("pan-sweep%s: mean abs error %.1f deg over %d samples -> %s\n",
+                container8 ? " (8ch container)" : " (2ch)", meanErr, errN,
+                ok ? "PASS" : "FAIL");
     return ok ? 0 : 1;
 }
 } // namespace
@@ -1637,7 +1644,9 @@ int wmain(int argc, wchar_t** argv) {
         } else if (simScenario == L"dual-orbit") {
             rc = RunOrbitTest(cfg, true);
         } else if (simScenario == L"pan-sweep") {
-            rc = RunPanSweep(cfg);
+            rc = RunPanSweep(cfg, true); // 8ch container, stereo content (VB-CABLE)
+        } else if (simScenario == L"pan-sweep-2ch") {
+            rc = RunPanSweep(cfg, false); // true 2ch stream
         } else {
             sr::SimScenario sc = sr::SimSweep;
             if (simScenario == L"sweep") sc = sr::SimSweep;

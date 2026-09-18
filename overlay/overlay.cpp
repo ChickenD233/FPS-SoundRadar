@@ -257,8 +257,27 @@ struct SceneResources {
     ComPtr<ID2D1SolidColorBrush> textBrush;
     ComPtr<ID2D1StrokeStyle> roundCaps;     // round-capped arc strokes
     ComPtr<ID2D1PathGeometry> star;         // gunshot starburst, local origin
+    ComPtr<ID2D1PathGeometry> needle;       // compass needle, center -> up
     ComPtr<IDWriteTextLayout> cornerLayout; // "实验性 Experimental"
 };
+
+// Compass needle: slim tapered quad + triangular tip, pointing up from the
+// center. Rotated per frame to the dominant cluster angle.
+ComPtr<ID2D1PathGeometry> MakeNeedle(ID2D1Factory* factory, float cx, float cy, float r) {
+    float mid = r * 0.72f, tip = r * 0.85f;
+    ComPtr<ID2D1PathGeometry> geo;
+    if (FAILED(factory->CreatePathGeometry(&geo))) return nullptr;
+    ComPtr<ID2D1GeometrySink> sink;
+    if (FAILED(geo->Open(&sink))) return nullptr;
+    sink->BeginFigure(D2D1::Point2F(cx - 3.0f, cy - 1.0f), D2D1_FIGURE_BEGIN_FILLED);
+    sink->AddLine(D2D1::Point2F(cx + 3.0f, cy - 1.0f));
+    sink->AddLine(D2D1::Point2F(cx + 4.5f, cy - mid));
+    sink->AddLine(D2D1::Point2F(cx, cy - tip));
+    sink->AddLine(D2D1::Point2F(cx - 4.5f, cy - mid));
+    sink->EndFigure(D2D1_FIGURE_END_CLOSED);
+    sink->Close();
+    return geo;
+}
 
 // 8-point starburst polygon (gunshot icon), local coords centered at origin.
 ComPtr<ID2D1PathGeometry> MakeStar(ID2D1Factory* factory) {
@@ -306,7 +325,7 @@ ComPtr<ID2D1PathGeometry> MakeArc(ID2D1Factory* factory, float cx, float cy,
 HRESULT CreateSceneResources(ID2D1Factory* d2dFactory, IDWriteFactory* dwFactory,
                              ID2D1RenderTarget* rt, const OverlayConfig& cfg,
                              int w, int h, SceneResources& res) {
-    (void)cfg; (void)w; (void)h; // arcs are built per frame; nothing layout-bound
+    // arcs are built per frame; the needle geometry is layout-bound
     res.factory = d2dFactory;
     HRESULT hr = rt->CreateSolidColorBrush(D2D1::ColorF(0, 0, 0, 0), &res.brush);
     if (FAILED(hr)) return hr;
@@ -320,6 +339,10 @@ HRESULT CreateSceneResources(ID2D1Factory* d2dFactory, IDWriteFactory* dwFactory
     if (FAILED(hr)) return hr;
     res.star = MakeStar(d2dFactory);
     if (!res.star) return E_FAIL;
+    float cx = w * 0.5f + static_cast<float>(cfg.offsetX);
+    float cy = h * 0.5f + static_cast<float>(cfg.offsetY);
+    res.needle = MakeNeedle(d2dFactory, cx, cy, static_cast<float>(cfg.radius));
+    if (!res.needle) return E_FAIL;
 
     ComPtr<IDWriteTextFormat> cornerFmt;
     hr = dwFactory->CreateTextFormat(L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_NORMAL,
@@ -418,12 +441,30 @@ void DrawCapsule(ID2D1RenderTarget* rt, const SceneResources& res,
 // ripple, and crisp vector type icons (footstep pair / gunshot spark).
 void DrawScene(ID2D1RenderTarget* rt, const SceneResources& res, const OverlayConfig& cfg,
                const float levels[8], const std::vector<ArrowTracker::Arrow>& arrows,
+               float needleAngle, float needleStrength,
                const uint8_t* classes, bool classifyOn, int w, int h) {
     float cx = w * 0.5f + static_cast<float>(cfg.offsetX);
     float cy = h * 0.5f + static_cast<float>(cfg.offsetY);
     float r = static_cast<float>(cfg.radius);
     float fx = cfg.fxPct / 100.0f;
     (void)levels; // everything direction-related reads the tracked clusters now
+
+    // compass needle UNDER the arcs: slim, ~55% alpha, glow scaled by FX
+    if (needleStrength > 0.02f && res.needle) {
+        D2D1_COLOR_F col = NeonColor(needleStrength, cfg);
+        col.a = 0.60f * (0.4f + 0.6f * needleStrength);
+        rt->SetTransform(D2D1::Matrix3x2F::Rotation(needleAngle, D2D1::Point2F(cx, cy)));
+        if (fx > 0.0f) { // glow: wider dimmer copy behind
+            res.brush->SetColor(NeonColor(needleStrength, cfg, col.a * 0.35f * fx));
+            rt->SetTransform(D2D1::Matrix3x2F::Scale(1.35f, 1.18f, D2D1::Point2F(cx, cy)) *
+                             D2D1::Matrix3x2F::Rotation(needleAngle, D2D1::Point2F(cx, cy)));
+            rt->FillGeometry(res.needle.Get(), res.brush.Get());
+            rt->SetTransform(D2D1::Matrix3x2F::Rotation(needleAngle, D2D1::Point2F(cx, cy)));
+        }
+        res.brush->SetColor(col);
+        rt->FillGeometry(res.needle.Get(), res.brush.Get());
+        rt->SetTransform(D2D1::Matrix3x2F::Identity());
+    }
 
     for (const auto& a : arrows) {
         if (a.strength <= 0.02f) continue;
@@ -771,6 +812,10 @@ void Overlay::ThreadMain(bool visible) {
     ArrowTracker tracker;
     uint64_t lastTick = GetTickCount64();
     int presentLogCount = 0;
+    bool stereoMode_ = false;  // active-channel auto-detect (hysteresis)
+    float modeTimer_ = 0.0f;
+    bool needleUp_ = false;    // compass needle state
+    float needleAngle_ = 0.0f, needleStrength_ = 0.0f;
 
     // --- render loop: ~60 fps while audio active, ~4 fps polling when idle --
     HANDLE waits[2] = { quitEvent_, stopEvent_ };
@@ -804,12 +849,29 @@ void Overlay::ThreadMain(bool visible) {
         for (int c = 0; c < 8; ++c) if (frame.level[c] > maxLvl) maxLvl = frame.level[c];
         bool active = frame.active || maxLvl > 0.02f;
 
-        // direction estimation
+        // direction estimation; mode = stereo-pan vs 8ch cluster
         uint64_t nowTick = GetTickCount64();
         float dt = static_cast<float>(nowTick - lastTick) / 1000.0f;
         lastTick = nowTick;
-        if (srcCh == 2) {
-            // stereo input: pan sweeps one indicator across the front
+
+        // stereo evidence: only FL/FR carry energy (VB-CABLE wraps stereo games
+        // in an 8ch container, so srcChannels alone is not enough)
+        bool stereoEvidence = frame.level[0] > 0.03f || frame.level[1] > 0.03f;
+        for (int c = 2; c < 8; ++c)
+            if (frame.level[c] > 0.03f) stereoEvidence = false;
+        bool wantStereo = (srcCh == 2) || stereoEvidence;
+        if (wantStereo != stereoMode_) {
+            // hysteresis: switch only after ~300 ms of consistent evidence
+            modeTimer_ += dt;
+            if (modeTimer_ > 0.3f) {
+                stereoMode_ = wantStereo;
+                modeTimer_ = 0.0f;
+            }
+        } else {
+            modeTimer_ = 0.0f;
+        }
+
+        if (stereoMode_) {
             if (active) tracker.UpdateStereo(frame.level[0], frame.level[1], dt);
             else tracker.UpdateStereo(0.0f, 0.0f, dt); // fade out
         } else if (active) {
@@ -817,6 +879,29 @@ void Overlay::ThreadMain(bool visible) {
         } else {
             float zeros[8] = {};
             tracker.Update(zeros, 0.05f, dt); // lets arrows fade out
+        }
+
+        // compass needle: points at the loudest tracked cluster, drawn under arcs
+        {
+            float domAngle = 0.0f, domStrength = 0.0f;
+            for (const auto& a : tracker.Arrows())
+                if (a.strength > domStrength) {
+                    domStrength = a.strength;
+                    domAngle = a.angle;
+                }
+            float smoothA = 1.0f - std::exp(-dt / 0.08f);
+            if (domStrength > 0.02f) {
+                if (!needleUp_) {
+                    needleAngle_ = domAngle;
+                    needleStrength_ = 0.0f;
+                    needleUp_ = true;
+                }
+                needleAngle_ += ArrowTracker::ShortestDelta(domAngle, needleAngle_) * smoothA;
+                needleStrength_ += (domStrength - needleStrength_) * smoothA;
+            } else {
+                needleStrength_ *= std::exp(-dt / 0.15f);
+                if (needleStrength_ < 0.02f) needleUp_ = false;
+            }
         }
         {
             std::lock_guard<std::mutex> lk(debugMu_);
@@ -847,6 +932,7 @@ void Overlay::ThreadMain(bool visible) {
                 dc->BeginDraw();
                 dc->Clear(D2D1::ColorF(0, 0, 0, 0)); // fully transparent base
                 DrawScene(dc.Get(), res, cfg_, frame.level, tracker.Arrows(),
+                          needleUp_ ? needleAngle_ : 0.0f, needleStrength_,
                           classes, g_classifyEnabled.load(), w, h);
                 fhr = dc->EndDraw();
                 dc->SetTarget(nullptr);
@@ -928,8 +1014,15 @@ bool RenderSceneToFile(const std::wstring& path, int width, int height,
         tracker.Update(levels, 0.05f, 0.1f);
         rt->BeginDraw();
         rt->Clear(D2D1::ColorF(0.06f, 0.06f, 0.09f, 1.0f)); // opaque dark backdrop
-        DrawScene(rt.Get(), res, cfg, levels, tracker.Arrows(), classes,
-                  classes != nullptr, width, height);
+        // needle: point at the loudest cluster for the still frame
+        float needleAngle = 0.0f, needleStrength = 0.0f;
+        for (const auto& a : tracker.Arrows())
+            if (a.strength > needleStrength) {
+                needleStrength = a.strength;
+                needleAngle = a.angle;
+            }
+        DrawScene(rt.Get(), res, cfg, levels, tracker.Arrows(), needleAngle,
+                  needleStrength, classes, classes != nullptr, width, height);
         hr = rt->EndDraw();
     }
     if (FAILED(hr)) return false;

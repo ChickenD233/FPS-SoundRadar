@@ -269,6 +269,7 @@ function bindSlider(id, fmt) {
   const el = $(id);
   const show = () => { $(id + 'V').textContent = fmt(el.value); setFill(el); };
   el.addEventListener('input', show);
+  el.addEventListener('change', () => { if (window.__instantApply) window.__instantApply(); });
   el._show = show;
 }
 bindSlider('fade', v => v + ' ms');
@@ -342,6 +343,16 @@ $('resetW').onclick = () => post({cmd:'resetWeights'});
 $('btnTitleMin').onclick = () => post({cmd:'minimize'});
 $('btnTitleClose').onclick = () => post({cmd:'minimize'});
 $('btnSetDefault').onclick = () => post({cmd:'setDefault', selIn: $('selIn').selectedIndex});
+
+// instant-apply: toggles and device selects take effect without the Apply button
+function instantApply() {
+  post({cmd:'apply', selIn: $('selIn').selectedIndex,
+        selOut: $('selOut').selectedIndex, config: collectConfig()});
+}
+window.__instantApply = instantApply;
+for (const id of ['ovOn','clsOn','autoOn']) $(id).onchange = instantApply;
+$('selIn').onchange = instantApply;
+$('selOut').onchange = instantApply;
 // frameless window drag (WebView2 does not implement -webkit-app-region itself)
 $('titlebar').addEventListener('mousedown', e => {
   if (e.target.closest('.tbtn')) return;
@@ -351,6 +362,10 @@ $('titlebar').addEventListener('mousedown', e => {
 window.chrome.webview.addEventListener('message', ev => {
   if (ev.data && ev.data.type === 'state') applyState(ev.data);
 });
+// diagnostics: report every real click to the host log
+document.addEventListener('mousedown', e => {
+  post({cmd:'debugClick', id: e.target.id || e.target.className || e.target.tagName});
+}, true);
 post({cmd:'ready'});
 </script>
 </body>

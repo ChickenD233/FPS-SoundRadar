@@ -496,6 +496,12 @@ void Gui::OnBridgeMessage(const wchar_t* jsonW) {
     std::string j = ToUtf8(jsonW);
     std::string cmd;
     if (!JStr(j, "cmd", cmd)) return;
+    if (cmd == "debugClick") {
+        std::string tgt;
+        JStr(j, "id", tgt);
+        sr::Log("gui2: JS click received, target=[%s]", tgt.c_str());
+        return;
+    }
     if (cmd == "ready") {
         pageReady_ = true;
         PushState();
@@ -658,6 +664,10 @@ LRESULT CALLBACK Gui::WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
 
 LRESULT Gui::HandleMessage(UINT msg, WPARAM wp, LPARAM lp) {
     switch (msg) {
+        case WM_LBUTTONDOWN:
+            sr::Log("gui2: WM_LBUTTONDOWN at %d,%d", (int)(short)LOWORD(lp),
+                    (int)(short)HIWORD(lp));
+            break;
         case WM_ERASEBKGND: {
             HDC dc = reinterpret_cast<HDC>(wp);
             RECT rc;
