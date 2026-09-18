@@ -88,6 +88,7 @@ void PrintUsage() {
         "  --classifytest         sound classification tests (experimental), exit 0/1\n"
         "  --guitest              hidden GUI test: controls, Apply, config round-trip\n"
         "  --simulate-gui         hidden GUI + overlay plumbing test\n"
+        "  --onscreen-proof       visible overlay + CopyFromScreen pixel check\n"
         "  --simulate <scenario>  sweep | dual | pulse; feeds synthetic meters ~12 s\n"
         "  --simulate-screenshot <file.bmp>  render one dual frame to a BMP\n"
         "  --overlaytest [bmp]    overlay checks: ex-style, CPU, screenshots\n"
@@ -151,7 +152,7 @@ struct Pipeline {
             return false;
         }
         ren_ = std::make_unique<sr::RenderClient>();
-        if (!ren_->Init(cfg.outputDevice, lastError)) {
+        if (!ren_->Init(cfg.outputDevice, cfg.renderExclusive, lastError)) {
             sr::Log("pipeline: render init failed: %s", sr::ToUtf8(lastError).c_str());
             cap_.reset();
             ren_.reset();
@@ -247,7 +248,25 @@ struct Pipeline {
 
     ~Pipeline() { Stop(); }
 
+    // Glitch telemetry: logs one line when any counter is non-zero (deltas
+    // since the previous call). Called ~1/s from the tray tick.
+    void PollTelemetry() {
+        if (!running) return;
+        uint64_t ringOver = ring_ ? ring_->Overruns() : 0;
+        uint64_t ringDelta = ringOver - lastRingOverruns_;
+        lastRingOverruns_ = ringOver;
+        uint32_t pMin = 0, pMax = 0;
+        if (ren_) ren_->GetPaddingStats(pMin, pMax);
+        uint64_t gaps = cap_ ? cap_->GetPacketGaps() : 0;
+        bool padJitter = (pMax > pMin); // padding moved at all within the second
+        if (ringDelta || gaps || (pMax && padJitter))
+            sr::Log("telemetry: ringOverruns=+%llu renderPad=[%lu..%lu] capGaps=+%llu",
+                    (unsigned long long)ringDelta, (unsigned long)pMin,
+                    (unsigned long)pMax, (unsigned long long)gaps);
+    }
+
 private:
+    uint64_t lastRingOverruns_ = 0;
     std::unique_ptr<sr::CaptureClient> cap_;
     std::unique_ptr<sr::RenderClient> ren_;
     std::unique_ptr<sr::RingBuffer> ring_;
@@ -289,7 +308,7 @@ int RunApp(sr::AppConfig& cfg, const std::wstring& configPath, bool trayMode,
 
     sr::Overlay overlay;
     if (cfg.overlay.enabled) {
-        overlay.Start(cfg.overlay, &meters, g_quit);
+        overlay.Start(cfg.overlay, &meters, g_quit, /*visible=*/true);
         sr::Log("overlay: started (enabled)");
     }
 
@@ -345,7 +364,7 @@ int RunApp(sr::AppConfig& cfg, const std::wstring& configPath, bool trayMode,
     handlers.onOverlay = [&](bool on) {
         // Overlay off = render thread fully stopped, resources destroyed.
         // The audio path is untouched either way.
-        if (on) overlay.Start(cfg.overlay, &meters, g_quit);
+        if (on) overlay.Start(cfg.overlay, &meters, g_quit, /*visible=*/true);
         else overlay.Stop();
         cfg.overlay.enabled = on;
         sr::SaveConfig(configPath, cfg);
@@ -361,6 +380,9 @@ int RunApp(sr::AppConfig& cfg, const std::wstring& configPath, bool trayMode,
     };
     handlers.onExit = [&] { SetEvent(g_quit); };
     handlers.onTick = [&] {
+        // ~1 s glitch telemetry (logged only when non-zero)
+        static int tick = 0;
+        if (++tick % 2 == 0) pipeline.PollTelemetry();
         if (!GetConsoleWindow()) return;
         sr::AnalysisFrame fr;
         {
@@ -421,7 +443,7 @@ int RunSimulate(sr::AppConfig cfg, sr::SimScenario scenario) {
     cfg.overlay.enabled = true;
     sr::SharedMeters meters;
     sr::Overlay overlay;
-    overlay.Start(cfg.overlay, &meters, g_quit);
+    overlay.Start(cfg.overlay, &meters, g_quit, /*visible=*/false); // headless test
 
     HWND hwnd = WaitForOverlayWindow(overlay, 3000);
     bool styleOk = false;
@@ -456,7 +478,7 @@ int RunOverlayTest(sr::AppConfig cfg, const std::wstring& shotPath) {
     cfg.overlay.enabled = true;
     sr::SharedMeters meters;
     sr::Overlay overlay;
-    overlay.Start(cfg.overlay, &meters, g_quit);
+    overlay.Start(cfg.overlay, &meters, g_quit, /*visible=*/false); // headless test
 
     HWND hwnd = WaitForOverlayWindow(overlay, 3000);
     bool styleOk = hwnd && CheckExStyle(hwnd);
@@ -697,7 +719,7 @@ int RunSimulateGui(sr::AppConfig cfg) {
 
     sr::SharedMeters meters;
     sr::Overlay overlay;
-    overlay.Start(cfg.overlay, &meters, g_quit);
+    overlay.Start(cfg.overlay, &meters, g_quit, /*visible=*/false); // headless test
     sr::Simulator sim(sr::SimDual, &meters, g_quit);
     sim.Start();
 
@@ -759,6 +781,166 @@ int RunSimulateGui(sr::AppConfig cfg) {
                 guiOk ? "ok" : "FAIL", overlayHwnd ? "ok" : "FAIL",
                 overlayApplied ? "ok" : "FAIL", (unsigned long long)frames, lowNow,
                 frWeight, ok ? "PASS" : "FAIL");
+    return ok ? 0 : 1;
+}
+
+// --- on-screen proof: visible overlay + CopyFromScreen pixel check -----------
+
+// Captures a screen region (absolute coords) via GDI and saves as 24-bit BMP.
+bool CaptureScreenRegion(int x, int y, int w, int h, const std::wstring& path,
+                         std::vector<uint8_t>& rgbOut) {
+    HDC screen = GetDC(nullptr);
+    HDC mem = CreateCompatibleDC(screen);
+    HBITMAP bmp = CreateCompatibleBitmap(screen, w, h);
+    HGDIOBJ old = SelectObject(mem, bmp);
+    BitBlt(mem, 0, 0, w, h, screen, x, y, SRCCOPY | CAPTUREBLT);
+
+    BITMAPINFOHEADER bi = {};
+    bi.biSize = sizeof(bi);
+    bi.biWidth = w;
+    bi.biHeight = -h; // top-down
+    bi.biPlanes = 1;
+    bi.biBitCount = 24;
+    bi.biCompression = BI_RGB;
+    rgbOut.resize(static_cast<size_t>(w) * h * 3);
+    GetDIBits(mem, bmp, 0, h, rgbOut.data(), reinterpret_cast<BITMAPINFO*>(&bi),
+              DIB_RGB_COLORS);
+    SelectObject(mem, old);
+    DeleteObject(bmp);
+    DeleteDC(mem);
+    ReleaseDC(nullptr, screen);
+
+    FILE* f = nullptr;
+    if (_wfopen_s(&f, path.c_str(), L"wb") != 0 || !f) return false;
+    uint32_t imgSize = static_cast<uint32_t>(rgbOut.size());
+    BITMAPFILEHEADER fh = {};
+    fh.bfType = 0x4D42;
+    fh.bfSize = sizeof(fh) + sizeof(bi) + imgSize;
+    fh.bfOffBits = sizeof(fh) + sizeof(bi);
+    BITMAPINFOHEADER bih = bi;
+    bih.biHeight = h; // bottom-up for file readers
+    // rows are already top-down in rgbOut; flip while writing
+    fwrite(&fh, 1, sizeof(fh), f);
+    fwrite(&bih, 1, sizeof(bih), f);
+    size_t stride = (static_cast<size_t>(w) * 3 + 3) & ~size_t(3);
+    std::vector<uint8_t> row(stride);
+    for (int r = h - 1; r >= 0; --r) {
+        std::memcpy(row.data(), rgbOut.data() + static_cast<size_t>(r) * w * 3,
+                    static_cast<size_t>(w) * 3);
+        fwrite(row.data(), 1, stride, f);
+    }
+    fclose(f);
+    return true;
+}
+
+int RunOnscreenProof(sr::AppConfig cfg) {
+    cfg.overlay.enabled = true;
+    {
+        std::lock_guard<std::mutex> lk(sr::g_overlay.mu);
+        sr::g_overlay.cfg = cfg.overlay;
+        ++sr::g_overlay.version;
+    }
+    sr::SharedMeters meters;
+    sr::Overlay overlay;
+    overlay.Start(cfg.overlay, &meters, g_quit, /*visible=*/true);
+
+    // deterministic meter feed: FL+BR arrows red, LFE brightens the ring so it
+    // stays detectable even on a white background
+    {
+        std::lock_guard<std::mutex> lk(meters.mu);
+        for (int c = 0; c < 8; ++c) {
+            meters.frame.level[c] = 0.0f;
+            meters.frame.peak[c] = false;
+        }
+        meters.frame.level[0] = 0.8f; // FL
+        meters.frame.level[5] = 0.8f; // BR
+        meters.frame.level[3] = 0.9f; // LFE -> ring bright
+        meters.frame.peak[0] = meters.frame.peak[5] = meters.frame.peak[3] = true;
+        meters.frame.active = true;
+    }
+
+    HWND hwnd = WaitForOverlayWindow(overlay, 3000);
+    Sleep(2500); // let it compose a few frames
+
+    int sw = GetSystemMetrics(SM_CXSCREEN), sh = GetSystemMetrics(SM_CYSCREEN);
+    int cx = sw / 2 + cfg.overlay.offsetX;
+    int cy = sh / 2 + cfg.overlay.offsetY;
+    int r = cfg.overlay.radius;
+    int box = r + 70;
+    std::vector<uint8_t> rgb;
+    bool capOk = CaptureScreenRegion(cx - box, cy - box, box * 2, box * 2,
+                                     L"build\\onscreen-proof.bmp", rgb);
+
+    // background-independent diff: capture again with the overlay gone
+    overlay.Stop();
+    Sleep(400);
+    std::vector<uint8_t> rgbOff;
+    CaptureScreenRegion(cx - box, cy - box, box * 2, box * 2,
+                        L"build\\onscreen-proof-off.bmp", rgbOff);
+
+    // pixel checks (region-local coords; BGR order)
+    int W = box * 2;
+    auto lum = [&](const std::vector<uint8_t>& buf, int px, int py) -> double {
+        size_t i = (static_cast<size_t>(py) * W + px) * 3;
+        return 0.114 * buf[i] + 0.587 * buf[i + 1] + 0.299 * buf[i + 2];
+    };
+    int lx = box, ly = box; // region-local center
+
+    // 1) ring present in the live capture: brighter than radial neighbors
+    int ringHits = 0;
+    const int N = 36;
+    for (int k = 0; k < N; ++k) {
+        double a = k * 2.0 * 3.14159265358979 / N;
+        auto at = [&](double rr) {
+            return lum(rgb, lx + static_cast<int>(std::sin(a) * rr),
+                       ly - static_cast<int>(std::cos(a) * rr));
+        };
+        double on = at(r), in = at(r - 7), out = at(r + 7);
+        // ring has a dark underlay + light core: visible (and detectable) on
+        // any background -> absolute radial contrast
+        double nb = (in + out) * 0.5;
+        if (std::fabs(on - nb) > 6.0) ++ringHits;
+    }
+    // 2) arrows: FL (330 deg) and BR (135 deg), brightest of a 7x7 just outside
+    auto reddish = [&](double deg) {
+        double a = deg * 3.14159265358979 / 180.0;
+        int px = lx + static_cast<int>(std::sin(a) * (r + 8));
+        int py = ly - static_cast<int>(std::cos(a) * (r + 8));
+        double best = 0;
+        int br = 0, bg = 0, bb = 0;
+        for (int dy = -3; dy <= 3; ++dy)
+            for (int dx2 = -3; dx2 <= 3; ++dx2) {
+                size_t i = (static_cast<size_t>(py + dy) * W + px + dx2) * 3;
+                double l = 0.114 * rgb[i] + 0.587 * rgb[i + 1] + 0.299 * rgb[i + 2];
+                if (l > best) {
+                    best = l;
+                    bb = rgb[i];
+                    bg = rgb[i + 1];
+                    br = rgb[i + 2];
+                }
+            }
+        return br > bg + 25 && br > bb + 25; // level 0.8 > high threshold -> red
+    };
+    bool arrowFL = reddish(330.0), arrowBR = reddish(135.0);
+
+    // 3) overlay-gone diff: changed pixels between the two captures
+    int diffPixels = 0;
+    for (int py = 0; py < W; ++py)
+        for (int px = 0; px < W; ++px) {
+            double d = std::fabs(lum(rgb, px, py) - lum(rgbOff, px, py));
+            if (d > 10.0) ++diffPixels;
+        }
+
+    bool ringOk = ringHits >= N / 2;
+    bool diffOk = diffPixels > 200;
+    bool ok = capOk && ringOk && arrowFL && arrowBR && diffOk;
+
+    std::printf("onscreen-proof: capture=%s ringHits=%d/%d arrows FL=%s BR=%s "
+                "diffPixels=%d -> %s\n",
+                capOk ? "ok" : "FAIL", ringHits, N, arrowFL ? "red" : "NO",
+                arrowBR ? "red" : "NO", diffPixels, ok ? "PASS" : "FAIL");
+    std::printf("  (overlay hwnd %s, %llu frames drawn)\n", hwnd ? "ok" : "MISSING",
+                (unsigned long long)overlay.FramesDrawn());
     return ok ? 0 : 1;
 }
 
@@ -831,7 +1013,7 @@ int wmain(int argc, wchar_t** argv) {
     std::wstring overlayTestShot;
     bool selftest = false, measure = false, measureLoopback = false, list = false;
     bool trayMode = false, overlayTest = false, classifyTest = false;
-    bool guiTest = false, simGui = false, diag = false;
+    bool guiTest = false, simGui = false, diag = false, onscreenProof = false;
     int panTestSeconds = -1;
 
     std::wstring argLine;
@@ -854,6 +1036,7 @@ int wmain(int argc, wchar_t** argv) {
         else if (a == L"--classifytest") classifyTest = true;
         else if (a == L"--guitest") guiTest = true;
         else if (a == L"--simulate-gui") simGui = true;
+        else if (a == L"--onscreen-proof") onscreenProof = true;
         else if (a == L"--measure") measure = true;
         else if (a == L"--measure-loopback") measureLoopback = true;
         else if (a == L"--pan-test") {
@@ -945,6 +1128,8 @@ int wmain(int argc, wchar_t** argv) {
         rc = RunOverlayTest(cfg, overlayTestShot.empty() ? L"overlay-dual.bmp" : overlayTestShot);
     } else if (guiTest) {
         rc = RunGuiTest();
+    } else if (onscreenProof) {
+        rc = RunOnscreenProof(cfg); // the ONE allowed visible-window test
     } else if (simGui) {
         rc = RunSimulateGui(cfg);
     } else if (!simScenario.empty()) {

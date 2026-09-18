@@ -156,6 +156,10 @@ void CaptureClient::Run(const Sink& sink, HANDLE quitEvent) {
 
     HANDLE waits[2] = { quitEvent, event_ };
     bool running = true;
+    UINT64 prevQpc = 0;
+    LONGLONG qpf = 0;
+    QueryPerformanceFrequency(reinterpret_cast<LARGE_INTEGER*>(&qpf));
+    const UINT64 gapTicks = static_cast<UINT64>(qpf * fmt_.periodMs * 3.0 / 1000.0);
     while (running) {
         DWORD w = WaitForMultipleObjects(2, waits, FALSE, INFINITE);
         if (w == WAIT_OBJECT_0) break; // quit
@@ -171,6 +175,10 @@ void CaptureClient::Run(const Sink& sink, HANDLE quitEvent) {
             if (FAILED(hr)) { running = false; break; }
 
             if (frames > 0) {
+                // glitch telemetry: gap between consecutive packet timestamps
+                if (prevQpc != 0 && qpcPos > prevQpc && qpcPos - prevQpc > gapTicks)
+                    gapCount_.fetch_add(1, std::memory_order_relaxed);
+                prevQpc = qpcPos;
                 float* dst = staging_.data();
                 if (flags & AUDCLNT_BUFFERFLAGS_SILENT) {
                     std::memset(dst, 0, static_cast<size_t>(frames) * 8 * sizeof(float));

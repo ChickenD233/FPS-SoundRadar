@@ -23,7 +23,10 @@ public:
     // Spawns the overlay thread (window + DComp/D2D resources live there).
     // quitEvent: global shutdown; Stop() uses its own event so the tray can
     // toggle the overlay without touching the audio path.
-    bool Start(const OverlayConfig& cfg, SharedMeters* meters, HANDLE quitEvent);
+    // visible: production passes true; headless tests pass false (a hidden
+    // window is never composed by DWM, so nothing reaches the screen).
+    bool Start(const OverlayConfig& cfg, SharedMeters* meters, HANDLE quitEvent,
+               bool visible = true);
     void Stop();
 
     bool IsRunning() const { return running_.load(); }
@@ -43,7 +46,7 @@ public:
     void ResetStats();
 
 private:
-    void ThreadMain();
+    void ThreadMain(bool visible);
 
     OverlayConfig cfg_;
     SharedMeters* meters_ = nullptr;

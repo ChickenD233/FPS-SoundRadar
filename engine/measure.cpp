@@ -40,7 +40,7 @@ int RunMeasure(const std::wstring& outputName, const std::wstring& captureDevice
         return 2;
     }
     RenderClient ren;
-    if (!ren.Init(outputName, err)) {
+    if (!ren.Init(outputName, /*allowExclusive=*/true, err)) {
         std::fprintf(stderr, "render init failed: %s\n", ToUtf8(err).c_str());
         return 1;
     }

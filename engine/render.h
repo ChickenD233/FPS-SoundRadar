@@ -5,6 +5,8 @@
 
 #include "wasapi_util.h"
 
+#include <atomic>
+#include <cstdint>
 #include <functional>
 #include <string>
 #include <vector>
@@ -32,8 +34,10 @@ public:
     RenderClient() = default;
     ~RenderClient();
 
-    // nameSub: empty = default multimedia render endpoint, else substring match.
-    bool Init(const std::wstring& nameSub, std::wstring& err);
+    // nameSub: empty = default physical render endpoint (virtual endpoints are
+    // skipped). allowExclusive: try 5 ms exclusive first (config
+    // render_exclusive); default false = shared 10 ms (static-safe on USB DACs).
+    bool Init(const std::wstring& nameSub, bool allowExclusive, std::wstring& err);
 
     // Blocking render loop (call on a dedicated thread).
     void Run(const Pull& pull, HANDLE quitEvent);
@@ -43,6 +47,9 @@ public:
 
     // Frames currently queued between "now" and the DAC, via IAudioClock.
     bool EstimateQueuedFrames(uint64_t& framesAhead);
+
+    // Glitch telemetry: padding min/max since last call (reset = read+clear).
+    void GetPaddingStats(uint32_t& padMin, uint32_t& padMax);
 
 private:
     bool TryInitialize(const WAVEFORMATEX* wfx, bool exclusive,
@@ -59,6 +66,7 @@ private:
     std::vector<float> inBuf_;   // 48k stereo float from engine
     std::vector<float> resBuf_;  // device-rate stereo float after resampling
     std::vector<float> tmpBuf_;  // multichannel expansion scratch (shared mode)
+    std::atomic<uint32_t> padMin_{0xFFFFFFFF}, padMax_{0}; // glitch telemetry
     double resPhase_ = 0.0;      // resampler read position (fractional input frame)
     float resPrevL_ = 0.0f, resPrevR_ = 0.0f;
     bool resPrimed_ = false;
