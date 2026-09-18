@@ -9,8 +9,11 @@
 #include <eventtoken.h>
 #include <WebView2.h>
 
+#include <dwmapi.h>
 #include <shlwapi.h>
 #include <uxtheme.h>
+
+#pragma comment(lib, "dwmapi")
 
 #include <cstdio>
 #include <cstring>
@@ -88,6 +91,7 @@ const wchar_t* kGuiClassName = L"SoundRadarMainWnd";
 namespace {
 
 constexpr UINT kStateTimer = 77;
+constexpr UINT kFitTimer = 78;
 
 std::wstring AppDataDir() {
     std::wstring p = DefaultConfigPath();
@@ -211,19 +215,24 @@ bool Gui::Create(const Hooks& hooks, bool hidden) {
         return false;
     }
 
+    // frameless window, rounded corners via DWM; WS_EX_APPWINDOW keeps a
+    // taskbar button (popup windows need it explicitly)
     RECT rc = { 0, 0, 560, 900 };
-    AdjustWindowRectEx(&rc, WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX,
-                       FALSE, 0);
     int w = rc.right - rc.left, h = rc.bottom - rc.top;
     int x = (GetSystemMetrics(SM_CXSCREEN) - w) / 2;
     int y = (GetSystemMetrics(SM_CYSCREEN) - h) / 2;
-    hwnd_ = CreateWindowExW(0, kGuiClassName, L"SoundRadar 声纹雷达",
-                            WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX,
-                            x, y, w, h, nullptr, nullptr, inst, this);
+    hwnd_ = CreateWindowExW(WS_EX_APPWINDOW, kGuiClassName, L"SoundRadar 声纹雷达",
+                            WS_POPUP, x, y, w, h, nullptr, nullptr, inst, this);
     if (!hwnd_) {
         Log("gui2: CreateWindowEx failed err=%lu", GetLastError());
         return false;
     }
+    int corner = DWMWCP_ROUND;
+    DwmSetWindowAttribute(hwnd_, DWMWA_WINDOW_CORNER_PREFERENCE, &corner, sizeof(corner));
+    COLORREF border = RGB(0x2a, 0x30, 0x40);
+    DwmSetWindowAttribute(hwnd_, DWMWA_BORDER_COLOR, &border, sizeof(border));
+    MARGINS m = { 0, 0, 0, 1 }; // 1px frame extension -> DWM drop shadow
+    DwmExtendFrameIntoClientArea(hwnd_, &m);
 
     // device lists (index 0 = Auto / Default)
     devIn_.clear();
@@ -488,6 +497,13 @@ void Gui::OnBridgeMessage(const wchar_t* jsonW) {
     if (cmd == "ready") {
         pageReady_ = true;
         PushState();
+        SetTimer(hwnd_, kFitTimer, 400, nullptr); // auto-fit once laid out
+        return;
+    }
+    if (cmd == "drag") {
+        // frameless: title-bar drag starts the modal move loop
+        ReleaseCapture();
+        SendMessageW(hwnd_, WM_NCLBUTTONDOWN, HTCAPTION, 0);
         return;
     }
     if (cmd == "exit") {
@@ -581,6 +597,32 @@ void Gui::ApplyFromJson(const std::string& cj, int selIn, int selOut) {
     PushState();
 }
 
+// Sizes the frameless window to the measured page content (no scrollbar ever).
+void Gui::MeasureAndFit() {
+    std::wstring r;
+    if (!EvalJson(L"String(document.documentElement.scrollHeight)", r))
+        return;
+    int contentH = 0;
+    for (wchar_t c : r)
+        if (c >= L'0' && c <= L'9') contentH = contentH * 10 + (c - L'0');
+    if (contentH < 400) return;
+    // scrollHeight is in CSS px; the window is sized in physical px
+    double scale = GetDpiForWindow(hwnd_) / 96.0;
+    contentH = static_cast<int>(contentH * scale + 0.5);
+    int maxH = GetSystemMetrics(SM_CYSCREEN) - 60;
+    if (contentH > maxH) contentH = maxH;
+    RECT cr;
+    GetClientRect(hwnd_, &cr);
+    int curH = cr.bottom - cr.top;
+    if (curH == contentH) return;
+    SetWindowPos(hwnd_, nullptr, 0, 0, cr.right - cr.left, contentH,
+                 SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+    RECT after;
+    GetClientRect(hwnd_, &after);
+    Log("gui2: auto-fit height %d -> %d (actual client %d)", curH, contentH,
+        after.bottom - after.top);
+}
+
 // --- window proc ---------------------------------------------------------------
 
 LRESULT CALLBACK Gui::WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
@@ -614,6 +656,10 @@ LRESULT Gui::HandleMessage(UINT msg, WPARAM wp, LPARAM lp) {
             return 0;
         case WM_TIMER:
             if (wp == kStateTimer) PushState();
+            else if (wp == kFitTimer) {
+                KillTimer(hwnd_, kFitTimer);
+                MeasureAndFit();
+            }
             return 0;
         case kMsgGuiActivate:
             Show();

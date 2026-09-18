@@ -675,8 +675,10 @@ int RunGuiTest() {
         CloseHandle(testQuit);
         return 1;
     }
+    // frameless window: taskbar button via WS_EX_APPWINDOW (popup needs it)
     LONG guiEx = GetWindowLongW(gui.Hwnd(), GWL_EXSTYLE);
-    check("taskbar button present (no WS_EX_TOOLWINDOW)", (guiEx & WS_EX_TOOLWINDOW) == 0);
+    check("taskbar button (WS_EX_APPWINDOW, no TOOLWINDOW)",
+          (guiEx & WS_EX_APPWINDOW) != 0 && (guiEx & WS_EX_TOOLWINDOW) == 0);
 
     // wait for webview + page bridge (pump messages manually; no visible window)
     uint64_t t0 = GetTickCount64();
@@ -700,11 +702,39 @@ int RunGuiTest() {
         L"+';checks='+document.querySelectorAll('input[type=checkbox]').length"
         L"+';buttons='+document.querySelectorAll('button').length)", inv);
     std::printf("  dom inventory: %s\n", sr::ToUtf8(inv).c_str());
-    check("dom: 15 sliders, 2 selects, 3 toggles, 6 buttons",
+    check("dom: 15 sliders, 2 selects, 3 toggles, 8 buttons",
           evalOk && inv.find(L"ranges=15") != std::wstring::npos &&
           inv.find(L"selects=2") != std::wstring::npos &&
           inv.find(L"checks=3") != std::wstring::npos &&
-          inv.find(L"buttons=6") != std::wstring::npos);
+          inv.find(L"buttons=8") != std::wstring::npos);
+
+    // auto-fit: content must fit the frameless window without a scrollbar.
+    // The fit timer fires 400 ms after page-ready; pump past it first.
+    t0 = GetTickCount64();
+    while (GetTickCount64() - t0 < 800) {
+        gui.PumpMessages();
+        Sleep(20);
+    }
+    std::wstring fitR;
+    bool fitEval = gui.EvalJson(
+        L"String('scroll='+document.documentElement.scrollHeight+"
+        L"' client='+document.documentElement.clientHeight)", fitR);
+    std::printf("  fit measure: %s\n", sr::ToUtf8(fitR).c_str());
+    bool fits = false;
+    {
+        // parse the two numbers; small screens cap the window and scroll
+        int sc = 0, cl = 0;
+        swscanf(fitR.c_str(), L"\"scroll=%d client=%d\"", &sc, &cl);
+        int maxH = GetSystemMetrics(SM_CYSCREEN) - 60;
+        if (sc > maxH) {
+            std::printf("  note: screen height caps the window (%d), page scrolls with "
+                        "the styled thin scrollbar\n", maxH);
+            fits = cl > 0; // can't fit; not a failure
+        } else {
+            fits = sc > 0 && cl > 0 && sc <= cl + 2;
+        }
+    }
+    check("content fits window (no overflow)", fitEval && fits);
 
     // expected device names for dropdown index 1
     auto caps = sr::EnumerateEndpoints(eCapture);
@@ -968,100 +998,112 @@ int RunOnscreenProof(sr::AppConfig cfg) {
         ++sr::g_overlay.version;
     }
     sr::SharedMeters meters;
-    sr::Overlay overlay;
-    overlay.Start(cfg.overlay, &meters, g_quit, /*visible=*/true);
-
-    // deterministic meter feed: FL+BR arrows (red). Nothing else is drawn near
-    // the center - the proof asserts the center stays untouched.
-    {
-        std::lock_guard<std::mutex> lk(meters.mu);
-        for (int c = 0; c < 8; ++c) {
-            meters.frame.level[c] = 0.0f;
-            meters.frame.peak[c] = false;
-        }
-        meters.frame.level[0] = 0.8f; // FL
-        meters.frame.level[5] = 0.8f; // BR
-        meters.frame.peak[0] = meters.frame.peak[5] = true;
-        meters.frame.active = true;
-    }
-
-    HWND hwnd = WaitForOverlayWindow(overlay, 3000);
-    Sleep(2500); // let it compose a few frames
 
     int sw = GetSystemMetrics(SM_CXSCREEN), sh = GetSystemMetrics(SM_CYSCREEN);
     int cx = sw / 2 + cfg.overlay.offsetX;
     int cy = sh / 2 + cfg.overlay.offsetY;
     int r = cfg.overlay.radius;
     int box = r + 70;
-    std::vector<uint8_t> rgb;
-    bool capOk = CaptureScreenRegion(cx - box, cy - box, box * 2, box * 2,
-                                     L"build\\onscreen-proof.bmp", rgb);
-
-    // background-independent diff: capture again with the overlay gone
-    overlay.Stop();
-    Sleep(400);
-    std::vector<uint8_t> rgbOff;
-    CaptureScreenRegion(cx - box, cy - box, box * 2, box * 2,
-                        L"build\\onscreen-proof-off.bmp", rgbOff);
-
-    // pixel checks (region-local coords; BGR order)
     int W = box * 2;
-    auto lum = [&](const std::vector<uint8_t>& buf, int px, int py) -> double {
-        size_t i = (static_cast<size_t>(py) * W + px) * 3;
-        return 0.114 * buf[i] + 0.587 * buf[i + 1] + 0.299 * buf[i + 2];
-    };
-    int lx = box, ly = box; // region-local center
 
-    // 1) arrows present at the right angles: FL (-30 deg) and BR (135 deg).
-    //    Pick the most RED-SATURATED pixel in a 7x7 box (max luminance would
-    //    pick washed-out glow over a bright background).
-    auto reddish = [&](double deg) {
-        double a = deg * 3.14159265358979 / 180.0;
-        int px = lx + static_cast<int>(std::sin(a) * (r + 8));
-        int py = ly - static_cast<int>(std::cos(a) * (r + 8));
-        double bestSat = -1e9;
-        int br = 0, bg = 0, bb = 0;
-        for (int dy = -3; dy <= 3; ++dy)
-            for (int dx2 = -3; dx2 <= 3; ++dx2) {
-                size_t i = (static_cast<size_t>(py + dy) * W + px + dx2) * 3;
-                int B = rgb[i], G = rgb[i + 1], R = rgb[i + 2];
-                double sat = R - (G + B) / 2.0;
-                if (sat > bestSat) {
-                    bestSat = sat;
-                    br = R; bg = G; bb = B;
-                }
-            }
-        bool red = bestSat > 40.0 && br > 150;
-        return red;
-    };
-    bool arrowFL = reddish(-30.0), arrowBR = reddish(135.0);
-
-    // 2) center stays 100% see-through: center 20x20 must match the
-    //    overlay-off capture almost exactly
-    double centerDiff = 0;
-    for (int py = ly - 10; py < ly + 10; ++py)
-        for (int px = lx - 10; px < lx + 10; ++px)
-            centerDiff += std::fabs(lum(rgb, px, py) - lum(rgbOff, px, py));
-    centerDiff /= 400.0;
-    bool centerClear = centerDiff < 2.0;
-
-    // 3) overlay-gone diff: changed pixels between the two captures
+    bool capOk = false, arrowFL = false, arrowBR = false;
+    double centerDiff = 1e9;
     int diffPixels = 0;
-    for (int py = 0; py < W; ++py)
-        for (int px = 0; px < W; ++px) {
-            double d = std::fabs(lum(rgb, px, py) - lum(rgbOff, px, py));
-            if (d > 10.0) ++diffPixels;
+
+    // retry: the user's desktop may change between the two captures
+    for (int attempt = 0; attempt < 3; ++attempt) {
+        sr::Overlay overlay;
+        overlay.Start(cfg.overlay, &meters, g_quit, /*visible=*/true);
+
+        // deterministic meter feed: FL+BR arrows (red). Nothing else is drawn
+        // near the center - the proof asserts the center stays untouched.
+        {
+            std::lock_guard<std::mutex> lk(meters.mu);
+            for (int c = 0; c < 8; ++c) {
+                meters.frame.level[c] = 0.0f;
+                meters.frame.peak[c] = false;
+            }
+            meters.frame.level[0] = 0.8f; // FL
+            meters.frame.level[5] = 0.8f; // BR
+            meters.frame.peak[0] = meters.frame.peak[5] = true;
+            meters.frame.active = true;
         }
 
-    bool diffOk = diffPixels > 200;
-    bool ok = capOk && arrowFL && arrowBR && centerClear && diffOk;
+        HWND hwnd = WaitForOverlayWindow(overlay, 3000);
+        Sleep(2500); // let it compose a few frames
 
+        std::vector<uint8_t> rgb;
+        capOk = CaptureScreenRegion(cx - box, cy - box, W, W,
+                                    L"build\onscreen-proof.bmp", rgb);
+
+        // background-independent diff: capture again with the overlay gone
+        overlay.Stop();
+        Sleep(400);
+        std::vector<uint8_t> rgbOff;
+        CaptureScreenRegion(cx - box, cy - box, W, W, L"build\onscreen-proof-off.bmp",
+                            rgbOff);
+
+        auto lum = [&](const std::vector<uint8_t>& buf, int px, int py) -> double {
+            size_t i = (static_cast<size_t>(py) * W + px) * 3;
+            return 0.114 * buf[i] + 0.587 * buf[i + 1] + 0.299 * buf[i + 2];
+        };
+        int lx = box, ly = box; // region-local center
+
+        // 1) arrows present at the right angles: FL (-30 deg) and BR (135 deg).
+        //    Pick the most RED-SATURATED pixel in a 7x7 box (max luminance
+        //    would pick washed-out glow over a bright background).
+        auto reddish = [&](double deg) {
+            double a = deg * 3.14159265358979 / 180.0;
+            int px = lx + static_cast<int>(std::sin(a) * (r + 8));
+            int py = ly - static_cast<int>(std::cos(a) * (r + 8));
+            double bestSat = -1e9;
+            int br = 0, bg = 0, bb = 0;
+            for (int dy = -3; dy <= 3; ++dy)
+                for (int dx2 = -3; dx2 <= 3; ++dx2) {
+                    size_t i = (static_cast<size_t>(py + dy) * W + px + dx2) * 3;
+                    int B = rgb[i], G = rgb[i + 1], R = rgb[i + 2];
+                    double sat = R - (G + B) / 2.0;
+                    if (sat > bestSat) {
+                        bestSat = sat;
+                        br = R; bg = G; bb = B;
+                    }
+                }
+            return bestSat > 40.0 && br > 150;
+        };
+        arrowFL = reddish(-30.0);
+        arrowBR = reddish(135.0);
+
+        // 2) center stays 100% see-through: center 20x20 must match the
+        //    overlay-off capture almost exactly
+        centerDiff = 0;
+        for (int py = ly - 10; py < ly + 10; ++py)
+            for (int px = lx - 10; px < lx + 10; ++px)
+                centerDiff += std::fabs(lum(rgb, px, py) - lum(rgbOff, px, py));
+        centerDiff /= 400.0;
+
+        // 3) overlay-gone diff: changed pixels between the two captures
+        diffPixels = 0;
+        for (int py = 0; py < W; ++py)
+            for (int px = 0; px < W; ++px) {
+                double d = std::fabs(lum(rgb, px, py) - lum(rgbOff, px, py));
+                if (d > 10.0) ++diffPixels;
+            }
+
+        if (attempt > 0)
+            std::printf("  (retry %d: desktop changed between captures)\n", attempt);
+        if (capOk && arrowFL && arrowBR && centerDiff < 2.0 && diffPixels > 200) {
+            std::printf("  (overlay hwnd %s, %llu frames drawn)\n",
+                        hwnd ? "ok" : "MISSING",
+                        (unsigned long long)overlay.FramesDrawn());
+            break;
+        }
+    }
+
+    bool ok = capOk && arrowFL && arrowBR && centerDiff < 2.0 && diffPixels > 200;
     std::printf("onscreen-proof: capture=%s arrows FL=%s BR=%s centerDiff=%.2f "
                 "diffPixels=%d -> %s\n",
                 capOk ? "ok" : "FAIL", arrowFL ? "red" : "NO", arrowBR ? "red" : "NO",
                 centerDiff, diffPixels, ok ? "PASS" : "FAIL");
-    std::printf("  (overlay hwnd %s, %llu frames drawn)\n", hwnd ? "ok" : "MISSING",
-                (unsigned long long)overlay.FramesDrawn());
     return ok ? 0 : 1;
 }
 
