@@ -1104,8 +1104,8 @@ int RunOnscreenProof(sr::AppConfig cfg) {
         //    would pick washed-out glow over a bright background).
         auto reddish = [&](double deg) {
             double a = deg * 3.14159265358979 / 180.0;
-            int px = lx + static_cast<int>(std::sin(a) * (r + 8));
-            int py = ly - static_cast<int>(std::cos(a) * (r + 8));
+            int px = lx + static_cast<int>(std::sin(a) * r); // arc band sits on r
+            int py = ly - static_cast<int>(std::cos(a) * r);
             double bestSat = -1e9;
             int br = 0, bg = 0, bb = 0;
             for (int dy = -3; dy <= 3; ++dy)
@@ -1166,6 +1166,51 @@ int RunOnscreenProof(sr::AppConfig cfg) {
                 capOk ? "ok" : "FAIL", arrowFL ? "red" : "NO", arrowBR ? "red" : "NO",
                 centerDiff, diffPixels, lastBandDiff, ok ? "PASS" : "FAIL");
     return ok ? 0 : 1;
+}
+
+// --- style shot: visible overlay with a crafted scene, captured to BMP ------
+
+int RunStyleShot(sr::AppConfig cfg) {
+    cfg.overlay.enabled = true;
+    cfg.overlay.offsetX = 0;
+    cfg.overlay.offsetY = 0;
+    {
+        std::lock_guard<std::mutex> lk(sr::g_overlay.mu);
+        sr::g_overlay.cfg = cfg.overlay;
+        ++sr::g_overlay.version;
+    }
+    sr::SharedMeters meters;
+    {
+        std::lock_guard<std::mutex> lk(meters.mu);
+        for (int c = 0; c < 8; ++c) {
+            meters.frame.level[c] = 0.0f;
+            meters.frame.peak[c] = false;
+            meters.classes[c] = sr::SoundNone;
+        }
+        meters.frame.level[0] = 0.55f; // FL: footstep, amber
+        meters.frame.level[5] = 0.95f; // BR: gunshot, red-magenta
+        meters.frame.level[7] = 0.35f; // SR: weak, cyan
+        meters.frame.peak[5] = true;
+        meters.frame.active = true;
+        meters.classes[0] = sr::SoundFootstep;
+        meters.classes[5] = sr::SoundGunshot;
+    }
+    sr::Overlay overlay;
+    overlay.Start(cfg.overlay, &meters, g_quit, /*visible=*/true);
+    HWND hwnd = WaitForOverlayWindow(overlay, 3000);
+    Sleep(2500);
+
+    int sw = GetSystemMetrics(SM_CXSCREEN), sh = GetSystemMetrics(SM_CYSCREEN);
+    int cx = sw / 2, cy = sh / 2;
+    int box = cfg.overlay.radius + 110;
+    std::vector<uint8_t> rgb;
+    bool capOk = CaptureScreenRegion(cx - box, cy - box, box * 2, box * 2,
+                                     L"build\\overlay-style.bmp", rgb);
+    std::printf("style-shot: capture=%s hwnd=%s frames=%llu -> build\\overlay-style.bmp\n",
+                capOk ? "ok" : "FAIL", hwnd ? "ok" : "MISSING",
+                (unsigned long long)overlay.FramesDrawn());
+    overlay.Stop();
+    return capOk ? 0 : 1;
 }
 
 // --- orbit tests: moving direction arrows ------------------------------------
@@ -1353,6 +1398,7 @@ int wmain(int argc, wchar_t** argv) {
     bool trayMode = false, overlayTest = false, classifyTest = false;
     bool guiTest = false, simGui = false, diag = false, onscreenProof = false;
     bool setDefault = false;
+    bool styleShot = false;
     std::wstring setDefaultNeedle; // optional explicit render-device substring
     int panTestSeconds = -1;
 
@@ -1377,6 +1423,7 @@ int wmain(int argc, wchar_t** argv) {
         else if (a == L"--guitest") guiTest = true;
         else if (a == L"--simulate-gui") simGui = true;
         else if (a == L"--onscreen-proof") onscreenProof = true;
+        else if (a == L"--style-shot") styleShot = true;
         else if (a == L"--measure") measure = true;
         else if (a == L"--measure-loopback") measureLoopback = true;
         else if (a == L"--pan-test") {
@@ -1496,6 +1543,8 @@ int wmain(int argc, wchar_t** argv) {
         rc = RunGuiTest();
     } else if (onscreenProof) {
         rc = RunOnscreenProof(cfg); // the ONE allowed visible-window test
+    } else if (styleShot) {
+        rc = RunStyleShot(cfg); // visible art-direction capture
     } else if (simGui) {
         rc = RunSimulateGui(cfg);
     } else if (!simScenario.empty()) {
