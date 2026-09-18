@@ -1090,7 +1090,7 @@ int wmain(int argc, wchar_t** argv) {
     if (panTestSeconds >= 0) return sr::RunPanTest(panTestSeconds);
     if (diag) return RunDiag(cfg);
 
-    if (trayMode) FreeConsole(); // autostart: no console window
+    if (trayMode || argc == 1) FreeConsole(); // autostart or Explorer double-click: no console window
 
     // first run: write a default config so users have something to edit
     {

@@ -15,6 +15,8 @@
 // the GPU, so a frame is just a few draw calls + Present.
 #include "overlay.h"
 
+#include <cmath>
+
 #include "../engine/log.h"          // sr::Log
 #include "../engine/wasapi_util.h" // ComInit
 
@@ -525,6 +527,9 @@ void Overlay::ThreadMain(bool visible) {
             frame = meters_->frame;
             std::memcpy(classes, meters_->classes, sizeof(classes));
         }
+        // Perceptual scale: linear levels sit too low on normal content
+        // (speech peaks ~0.15). sqrt boosts quiet sounds so arrows show.
+        for (int c = 0; c < 8; ++c) frame.level[c] = sqrtf(frame.level[c]);
         float maxLvl = 0.0f;
         for (int c = 0; c < 8; ++c) if (frame.level[c] > maxLvl) maxLvl = frame.level[c];
         bool active = frame.active || maxLvl > 0.02f;
