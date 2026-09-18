@@ -20,6 +20,7 @@
 #include <functional>
 
 #include "gui_web_html.h" // kGuiHtml (generated)
+#include "devicedefault.h"
 #include "log.h"
 #include "meters.h"
 #include "tray.h" // AutostartIsEnabled/AutostartSet
@@ -92,6 +93,7 @@ namespace {
 
 constexpr UINT kStateTimer = 77;
 constexpr UINT kFitTimer = 78;
+constexpr UINT kDragTimer = 79; // frameless window drag follows the cursor
 
 std::wstring AppDataDir() {
     std::wstring p = DefaultConfigPath();
@@ -501,9 +503,23 @@ void Gui::OnBridgeMessage(const wchar_t* jsonW) {
         return;
     }
     if (cmd == "drag") {
-        // frameless: title-bar drag starts the modal move loop
-        ReleaseCapture();
-        SendMessageW(hwnd_, WM_NCLBUTTONDOWN, HTCAPTION, 0);
+        // frameless title-bar drag: follow the cursor on a timer. (A modal
+        // HTCAPTION move loop would swallow the in-flight click's mouse-up and
+        // leave the page unclickable.)
+        GetCursorPos(&dragCursor_);
+        SetTimer(hwnd_, kDragTimer, 30, nullptr);
+        return;
+    }
+    if (cmd == "setDefault") {
+        double selIn = 0;
+        JNum(j, "selIn", selIn);
+        std::wstring capName = (selIn >= 1 && selIn <= (int)devIn_.size())
+                                   ? devIn_[static_cast<int>(selIn) - 1]
+                                   : L"SoundRadar";
+        std::wstring needle = RenderCounterpartNeedle(capName);
+        bool okSet = !needle.empty() && SetDefaultRenderDevice(needle);
+        Log("gui2: set-default '%s' -> '%s': %s", ToUtf8(capName).c_str(),
+            ToUtf8(needle).c_str(), okSet ? "ok" : "FAILED");
         return;
     }
     if (cmd == "exit") {
@@ -659,6 +675,19 @@ LRESULT Gui::HandleMessage(UINT msg, WPARAM wp, LPARAM lp) {
             else if (wp == kFitTimer) {
                 KillTimer(hwnd_, kFitTimer);
                 MeasureAndFit();
+            } else if (wp == kDragTimer) {
+                if ((GetAsyncKeyState(VK_LBUTTON) & 0x8000) == 0) {
+                    KillTimer(hwnd_, kDragTimer);
+                } else {
+                    POINT cur;
+                    GetCursorPos(&cur);
+                    RECT wr;
+                    GetWindowRect(hwnd_, &wr);
+                    SetWindowPos(hwnd_, nullptr, wr.left + cur.x - dragCursor_.x,
+                                 wr.top + cur.y - dragCursor_.y, 0, 0,
+                                 SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+                    dragCursor_ = cur;
+                }
             }
             return 0;
         case kMsgGuiActivate:

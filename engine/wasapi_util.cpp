@@ -108,6 +108,11 @@ Microsoft::WRL::ComPtr<IMMDevice> GetDefaultEndpoint(EDataFlow flow) {
     return dev;
 }
 
+std::wstring DefaultRenderName() {
+    auto dev = GetDefaultEndpoint(eRender);
+    return dev ? ReadFriendlyName(dev.Get()) : L"";
+}
+
 std::vector<DeviceInfo> SelectCaptureEndpoints(const std::wstring& configValue) {
     std::vector<DeviceInfo> all = EnumerateEndpoints(eCapture);
     std::vector<DeviceInfo> out;

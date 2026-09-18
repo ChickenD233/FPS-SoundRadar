@@ -13,7 +13,7 @@ enum DownmixMode {
 };
 
 struct DownmixConfig {
-    DownmixMode mode = DownmixRightMono;
+    DownmixMode mode = DownmixStereo; // default stereo; right-mono stays available
     // Per-channel weights used in RightMono mode. Order: FL FR C LFE BL BR SL SR.
     float weights[kChannels] = { 0.7f, 1.0f, 1.0f, 0.7f, 0.8f, 0.8f, 0.9f, 0.9f };
 };
