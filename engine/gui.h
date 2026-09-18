@@ -5,6 +5,7 @@
 #include <windows.h>
 
 #include <functional>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -32,6 +33,7 @@ enum GuiControlId {
     IDC_CHK_CLASSIFY,
     IDC_CHK_AUTOSTART,
     IDC_STATUS,
+    IDC_STATUSDOT,
     IDC_BTN_APPLY,
     IDC_BTN_OK,
     IDC_BTN_EXIT,
@@ -47,8 +49,9 @@ public:
         std::wstring configPath;       // where Apply saves
         // devChanged = input/output device selection changed (pipeline restart)
         std::function<void(bool devChanged)> onApply;
-        std::function<std::wstring()> statusText; // status bar provider (500 ms)
-        std::function<void()> onExit;           // 退出程序 button: real app exit
+        std::function<std::wstring()> statusText;  // status bar provider (500 ms)
+        std::function<int()> statusLevel;          // 0=running 1=waiting 2=error
+        std::function<void()> onExit;              // 退出程序 button: real app exit
     };
 
     bool Create(const Hooks& hooks, bool hidden); // false = creation failed
@@ -63,6 +66,7 @@ public:
 
 private:
     static LRESULT CALLBACK WndProc(HWND, UINT, WPARAM, LPARAM);
+    static LRESULT CALLBACK BtnSubProc(HWND, UINT, WPARAM, LPARAM, UINT_PTR, DWORD_PTR);
     LRESULT HandleMessage(UINT, WPARAM, LPARAM);
     void BuildControls();
     void RefreshDevices();
@@ -70,9 +74,29 @@ private:
     void UpdateSliderLabels();
     std::wstring ComboSelection(int id, bool input) const;
 
+    // construction/theme helpers
+    HWND Mk(const wchar_t* cls, const wchar_t* text, DWORD style, int x, int y, int w,
+            int h, int id, DWORD ex = 0);
+    void Caption(const wchar_t* text, int x, int y, int w);
+    HWND Slider(int x, int y, int w, int id, int mn, int mx);
+    HWND FlatButton(const wchar_t* text, int x, int y, int w, int id);
+    void DrawButton(LPDRAWITEMSTRUCT dis);
+    void DrawStatusDot(LPDRAWITEMSTRUCT dis);
+
     Hooks hooks_;
     HWND hwnd_ = nullptr;
     HFONT font_ = nullptr;
+    HFONT titleFont_ = nullptr;
+    HBRUSH bgBrush_ = nullptr;
+    HBRUSH stripBrush_ = nullptr;
+    HBRUSH sepBrush_ = nullptr;
+    HWND stripBg_ = nullptr;
+    std::vector<HWND> accentStatics_; // cyan captions + title
+    std::vector<HWND> dimStatics_;    // dimmer secondary text
+    std::vector<HWND> sepStatics_;    // separator lines
+    std::vector<HWND> ownerBtns_;     // owner-drawn push buttons
+    std::map<HWND, bool> btnHover_;
+    int statusLevel_ = 1; // amber until first tick
     // applied device selections (to detect changes on Apply)
     std::wstring appliedInput_, appliedOutput_;
     bool applying_ = false;

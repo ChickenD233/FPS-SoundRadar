@@ -1,9 +1,12 @@
-// gui.cpp - main settings window. Plain Win32 + common controls, DPI-aware.
+// gui.cpp - main settings window, dark sci-fi theme. Plain Win32 + common
+// controls; no third-party UI libs. Chinese-primary bilingual labels.
 #include "gui.h"
 
 #include <commctrl.h>
+#include <uxtheme.h>
 
 #include <cstdio>
+#include <map>
 
 #include "log.h"
 #include "meters.h" // g_downmix / g_overlay / g_analysis / g_classifyEnabled
@@ -11,6 +14,7 @@
 #include "wasapi_util.h"
 
 #pragma comment(lib, "comctl32")
+#pragma comment(lib, "uxtheme")
 
 namespace sr {
 
@@ -19,6 +23,16 @@ const wchar_t* kGuiClassName = L"SoundRadarMainWnd";
 namespace {
 
 constexpr UINT kStatusTimer = 42;
+
+// theme colors (COLORREF is 0x00BBGGRR)
+constexpr COLORREF kBg = RGB(0x14, 0x17, 0x1f);       // dark charcoal/navy
+constexpr COLORREF kPanel = RGB(0x1c, 0x21, 0x30);    // control fill
+constexpr COLORREF kPanelHot = RGB(0x23, 0x2a, 0x3d); // hover fill
+constexpr COLORREF kText = RGB(0xd8, 0xdc, 0xe6);     // light gray text
+constexpr COLORREF kAccent = RGB(0x00, 0xd2, 0xc8);   // cyan accent (#00d2c8)
+constexpr COLORREF kDanger = RGB(0xe0, 0x60, 0x60);   // exit button
+constexpr COLORREF kSep = RGB(0x2a, 0x30, 0x40);      // separator line
+constexpr COLORREF kStrip = RGB(0x10, 0x14, 0x1d);    // status strip
 
 // slider ranges
 constexpr int kFadeMin = 300, kFadeMax = 500;
@@ -32,14 +46,6 @@ constexpr int kWMax = 30;                    // weight * 20
 const wchar_t* kWeightNames[8] = { L"FL", L"FR", L"C", L"LFE", L"BL", L"BR", L"SL", L"SR" };
 const float kDefaultWeights[8] = { 0.7f, 1.0f, 1.0f, 0.7f, 0.8f, 0.8f, 0.9f, 0.9f };
 
-struct ChildEnumCtx {
-    std::vector<HWND>* list;
-};
-BOOL CALLBACK CollectChildren(HWND child, LPARAM lp) {
-    reinterpret_cast<ChildEnumCtx*>(lp)->list->push_back(child);
-    return TRUE;
-}
-
 bool HiddenTestMode() {
     static int cached = -1;
     if (cached < 0) {
@@ -52,11 +58,124 @@ bool HiddenTestMode() {
 
 } // namespace
 
+// --- control construction helpers --------------------------------------------
+
+HWND Gui::Mk(const wchar_t* cls, const wchar_t* text, DWORD style, int x, int y,
+             int w, int h, int id, DWORD ex) {
+    HWND c = CreateWindowExW(ex, cls, text, style | WS_CHILD | WS_VISIBLE, x, y, w, h,
+                             hwnd_, reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)),
+                             GetModuleHandleW(nullptr), nullptr);
+    return c;
+}
+
+void Gui::Caption(const wchar_t* text, int x, int y, int w) {
+    HWND cap = Mk(L"STATIC", text, SS_LEFT, x, y, 300, 18, -1);
+    accentStatics_.push_back(cap);
+    if (titleFont_) SendMessageW(cap, WM_SETFONT, reinterpret_cast<WPARAM>(titleFont_), TRUE);
+    HWND sep = Mk(L"STATIC", L"", SS_LEFT, x, y + 22, w, 1, -1);
+    sepStatics_.push_back(sep);
+}
+
+HWND Gui::Slider(int x, int y, int w, int id, int mn, int mx) {
+    HWND s = Mk(TRACKBAR_CLASSW, L"", TBS_HORZ | TBS_AUTOTICKS, x, y, w, 22, id);
+    SendMessageW(s, TBM_SETRANGE, TRUE, MAKELONG(mn, mx));
+    SendMessageW(s, TBM_SETPAGESIZE, 0, (mx - mn) / 10 + 1);
+    SetWindowTheme(s, L"DarkMode_Explorer", nullptr);
+    return s;
+}
+
+HWND Gui::FlatButton(const wchar_t* text, int x, int y, int w, int id) {
+    HWND b = Mk(L"BUTTON", text, BS_OWNERDRAW, x, y, w, 26, id);
+    ownerBtns_.push_back(b);
+    btnHover_[b] = false;
+    SetWindowSubclass(b, BtnSubProc, 1, reinterpret_cast<DWORD_PTR>(this));
+    return b;
+}
+
+LRESULT CALLBACK Gui::BtnSubProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp,
+                                 UINT_PTR, DWORD_PTR refData) {
+    Gui* self = reinterpret_cast<Gui*>(refData);
+    switch (msg) {
+        case WM_MOUSEMOVE:
+            if (!self->btnHover_[hwnd]) {
+                self->btnHover_[hwnd] = true;
+                InvalidateRect(hwnd, nullptr, TRUE);
+                TRACKMOUSEEVENT tme = { sizeof(tme), TME_LEAVE, hwnd, 0 };
+                TrackMouseEvent(&tme);
+            }
+            break;
+        case WM_MOUSELEAVE:
+            self->btnHover_[hwnd] = false;
+            InvalidateRect(hwnd, nullptr, TRUE);
+            break;
+        default:
+            break;
+    }
+    return DefSubclassProc(hwnd, msg, wp, lp);
+}
+
+void Gui::DrawButton(LPDRAWITEMSTRUCT dis) {
+    bool hover = btnHover_[dis->hwndItem];
+    bool pressed = (dis->itemState & ODS_SELECTED) != 0;
+    bool isExit = (dis->CtlID == IDC_BTN_EXIT);
+    COLORREF border = isExit ? kDanger : kAccent;
+    COLORREF fill = pressed ? kStrip : (hover ? kPanelHot : kPanel);
+
+    HBRUSH b = CreateSolidBrush(fill);
+    FillRect(dis->hDC, &dis->rcItem, b);
+    DeleteObject(b);
+    HPEN pen = CreatePen(PS_SOLID, 1, border);
+    HGDIOBJ oldPen = SelectObject(dis->hDC, pen);
+    HGDIOBJ oldBrush = SelectObject(dis->hDC, GetStockObject(NULL_BRUSH));
+    Rectangle(dis->hDC, dis->rcItem.left, dis->rcItem.top, dis->rcItem.right,
+              dis->rcItem.bottom);
+    SelectObject(dis->hDC, oldBrush);
+    SelectObject(dis->hDC, oldPen);
+    DeleteObject(pen);
+
+    wchar_t text[64] = {};
+    GetWindowTextW(dis->hwndItem, text, 64);
+    SetBkMode(dis->hDC, TRANSPARENT);
+    SetTextColor(dis->hDC, isExit ? RGB(0xe0, 0x80, 0x80) : kText);
+    if (font_) {
+        HGDIOBJ oldFont = SelectObject(dis->hDC, font_);
+        DrawTextW(dis->hDC, text, -1, &dis->rcItem,
+                  DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+        SelectObject(dis->hDC, oldFont);
+    } else {
+        DrawTextW(dis->hDC, text, -1, &dis->rcItem,
+                  DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+    }
+}
+
+void Gui::DrawStatusDot(LPDRAWITEMSTRUCT dis) {
+    COLORREF col = statusLevel_ == 0 ? RGB(0x3f, 0xd9, 0x7c)   // running: green
+                   : statusLevel_ == 1 ? RGB(0xe8, 0xb9, 0x3f)  // waiting: amber
+                                       : RGB(0xe0, 0x50, 0x50); // error: red
+    HBRUSH b = CreateSolidBrush(kStrip);
+    FillRect(dis->hDC, &dis->rcItem, b);
+    DeleteObject(b);
+    HBRUSH dot = CreateSolidBrush(col);
+    HGDIOBJ oldBrush = SelectObject(dis->hDC, dot);
+    HGDIOBJ oldPen = SelectObject(dis->hDC, GetStockObject(NULL_PEN));
+    Ellipse(dis->hDC, dis->rcItem.left, dis->rcItem.top, dis->rcItem.right,
+            dis->rcItem.bottom);
+    SelectObject(dis->hDC, oldPen);
+    SelectObject(dis->hDC, oldBrush);
+    DeleteObject(dot);
+}
+
+// --- window ------------------------------------------------------------------
+
 bool Gui::Create(const Hooks& hooks, bool hidden) {
     hooks_ = hooks;
 
     INITCOMMONCONTROLSEX icc = { sizeof(icc), ICC_BAR_CLASSES | ICC_STANDARD_CLASSES };
     InitCommonControlsEx(&icc); // trackbars
+
+    bgBrush_ = CreateSolidBrush(kBg);
+    stripBrush_ = CreateSolidBrush(kStrip);
+    sepBrush_ = CreateSolidBrush(kSep);
 
     HINSTANCE inst = GetModuleHandleW(nullptr);
     WNDCLASSEXW wc = {};
@@ -64,13 +183,16 @@ bool Gui::Create(const Hooks& hooks, bool hidden) {
     wc.lpfnWndProc = WndProc;
     wc.hInstance = inst;
     wc.lpszClassName = kGuiClassName;
-    wc.hbrBackground = reinterpret_cast<HBRUSH>(COLOR_BTNFACE + 1);
+    wc.hbrBackground = bgBrush_;
     if (!RegisterClassExW(&wc) && GetLastError() != ERROR_CLASS_ALREADY_EXISTS) {
         Log("gui: RegisterClassEx failed err=%lu", GetLastError());
         return false;
     }
 
-    int w = 520, h = 700;
+    RECT rc = { 0, 0, 520, 752 };
+    AdjustWindowRectEx(&rc, WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX,
+                       FALSE, 0);
+    int w = rc.right - rc.left, h = rc.bottom - rc.top;
     int x = (GetSystemMetrics(SM_CXSCREEN) - w) / 2;
     int y = (GetSystemMetrics(SM_CYSCREEN) - h) / 2;
     hwnd_ = CreateWindowExW(0, kGuiClassName, L"SoundRadar 声纹雷达",
@@ -84,18 +206,30 @@ bool Gui::Create(const Hooks& hooks, bool hidden) {
     font_ = CreateFontW(-13, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
                         OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
                         DEFAULT_PITCH, L"Microsoft YaHei UI");
+    titleFont_ = CreateFontW(-16, 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE,
+                             DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+                             CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Microsoft YaHei UI");
+
     BuildControls();
     RefreshDevices();
     LoadFromConfig();
     appliedInput_ = hooks_.cfg->captureDevice;
     appliedOutput_ = hooks_.cfg->outputDevice;
 
-    // font for every control
     std::vector<HWND> kids;
-    ChildEnumCtx ctx{ &kids };
-    EnumChildWindows(hwnd_, CollectChildren, reinterpret_cast<LPARAM>(&ctx));
+    struct Ctx { std::vector<HWND>* list; } ctx{ &kids };
+    EnumChildWindows(
+        hwnd_,
+        [](HWND child, LPARAM lp) -> BOOL {
+            reinterpret_cast<Ctx*>(lp)->list->push_back(child);
+            return TRUE;
+        },
+        reinterpret_cast<LPARAM>(&ctx));
     for (HWND k : kids)
         SendMessageW(k, WM_SETFONT, reinterpret_cast<WPARAM>(font_), TRUE);
+    // re-apply bigger font to title + captions (after the blanket pass)
+    for (HWND c : accentStatics_)
+        SendMessageW(c, WM_SETFONT, reinterpret_cast<WPARAM>(titleFont_), TRUE);
 
     SetTimer(hwnd_, kStatusTimer, 500, nullptr);
     if (!hidden) Show();
@@ -110,7 +244,6 @@ void Gui::Show() {
         return;
     }
     ShowWindow(hwnd_, SW_RESTORE);
-    // cross-process foreground needs the input-attach trick
     HWND fg = GetForegroundWindow();
     DWORD fgT = fg ? GetWindowThreadProcessId(fg, nullptr) : 0;
     DWORD myT = GetCurrentThreadId();
@@ -142,50 +275,34 @@ LRESULT CALLBACK Gui::WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     return DefWindowProcW(hwnd, msg, wp, lp);
 }
 
-// --- control construction ----------------------------------------------------
-
-namespace {
-
-HWND Mk(HWND parent, const wchar_t* cls, const wchar_t* text, DWORD style,
-        int x, int y, int w, int h, int id, DWORD ex = 0) {
-    return CreateWindowExW(ex, cls, text, style | WS_CHILD | WS_VISIBLE, x, y, w, h,
-                           parent, reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)),
-                           GetModuleHandleW(nullptr), nullptr);
-}
-
-HWND GroupBox(HWND parent, const wchar_t* text, int x, int y, int w, int h) {
-    return Mk(parent, L"BUTTON", text, BS_GROUPBOX, x, y, w, h, -1);
-}
-
-HWND Slider(HWND parent, int x, int y, int w, int id, int mn, int mx) {
-    HWND s = Mk(parent, TRACKBAR_CLASSW, L"", TBS_HORZ | TBS_AUTOTICKS, x, y, w, 22, id);
-    SendMessageW(s, TBM_SETRANGE, TRUE, MAKELONG(mn, mx));
-    SendMessageW(s, TBM_SETPAGESIZE, 0, (mx - mn) / 10 + 1);
-    return s;
-}
-
-} // namespace
-
 void Gui::BuildControls() {
+    // title strip
+    HWND title = Mk(L"STATIC", L"SoundRadar 声纹雷达", SS_LEFT, 16, 10, 300, 24, -1);
+    accentStatics_.push_back(title);
+    HWND titleSub = Mk(L"STATIC", L"声道方向声纹 · v0.6", SS_LEFT, 320, 14, 180, 16, -1);
+    dimStatics_.push_back(titleSub);
+
     // 设备 Devices
-    GroupBox(hwnd_, L"设备 Devices", 10, 8, 500, 92);
-    Mk(hwnd_, L"STATIC", L"输入/捕获 Input", SS_LEFT, 22, 32, 96, 18, -1);
-    Mk(hwnd_, L"STATIC", L"输出 Output", SS_LEFT, 22, 64, 96, 18, -1);
-    Mk(hwnd_, L"COMBOBOX", L"", CBS_DROPDOWNLIST | WS_VSCROLL, 122, 28, 376, 300,
-       IDC_COMBO_INPUT);
-    Mk(hwnd_, L"COMBOBOX", L"", CBS_DROPDOWNLIST | WS_VSCROLL, 122, 60, 376, 300,
-       IDC_COMBO_OUTPUT);
+    Caption(L"设备 DEVICES", 16, 48, 488);
+    Mk(L"STATIC", L"输入/捕获 Input", SS_LEFT, 22, 86, 96, 18, -1);
+    Mk(L"STATIC", L"输出 Output", SS_LEFT, 22, 118, 96, 18, -1);
+    HWND ci = Mk(L"COMBOBOX", L"", CBS_DROPDOWNLIST | WS_VSCROLL, 122, 82, 382, 300,
+                 IDC_COMBO_INPUT);
+    HWND co = Mk(L"COMBOBOX", L"", CBS_DROPDOWNLIST | WS_VSCROLL, 122, 114, 382, 300,
+                 IDC_COMBO_OUTPUT);
+    SetWindowTheme(ci, L"DarkMode_Explorer", nullptr);
+    SetWindowTheme(co, L"DarkMode_Explorer", nullptr);
 
     // 模式 Mode
-    GroupBox(hwnd_, L"模式 Mode", 10, 108, 500, 44);
-    Mk(hwnd_, L"BUTTON", L"右耳单声道 Right-Mono", BS_AUTORADIOBUTTON | WS_GROUP, 22, 128,
-       180, 20, IDC_RADIO_MONO);
-    Mk(hwnd_, L"BUTTON", L"立体声 Stereo", BS_AUTORADIOBUTTON, 210, 128, 150, 20,
+    Caption(L"模式 MODE", 16, 150, 488);
+    Mk(L"BUTTON", L"右耳单声道 Right-Mono", BS_AUTORADIOBUTTON | WS_GROUP, 22, 182, 180,
+       20, IDC_RADIO_MONO);
+    Mk(L"BUTTON", L"立体声 Stereo", BS_AUTORADIOBUTTON, 210, 182, 150, 20,
        IDC_RADIO_STEREO);
 
     // 声纹样式 Overlay style
-    GroupBox(hwnd_, L"声纹样式 Overlay style", 10, 160, 500, 248);
-    Mk(hwnd_, L"BUTTON", L"显示声纹 Show overlay", BS_AUTOCHECKBOX, 22, 182, 180, 20,
+    Caption(L"声纹样式 OVERLAY STYLE", 16, 214, 488);
+    Mk(L"BUTTON", L"显示声纹 Show overlay", BS_AUTOCHECKBOX, 22, 246, 180, 20,
        IDC_CHK_OVERLAY);
     struct Row { int id; const wchar_t* label; int mn, mx; };
     const Row rows[] = {
@@ -197,39 +314,41 @@ void Gui::BuildControls() {
         { IDC_SLIDER_POSY, L"位置Y Pos Y", kPosYMin, kPosYMax },
         { IDC_SLIDER_FX, L"特效强度 FX", kFxMin, kFxMax },
     };
-    int y = 210;
+    int y = 274;
     for (const Row& r : rows) {
-        Mk(hwnd_, L"STATIC", r.label, SS_LEFT, 22, y + 2, 96, 18, -1);
-        Slider(hwnd_, 122, y, 290, r.id, r.mn, r.mx);
-        Mk(hwnd_, L"STATIC", L"", SS_LEFT, 418, y + 2, 80, 18, r.id + 500); // value label
+        Mk(L"STATIC", r.label, SS_LEFT, 22, y + 2, 96, 18, -1);
+        Slider(122, y, 290, r.id, r.mn, r.mx);
+        Mk(L"STATIC", L"", SS_LEFT, 418, y + 2, 80, 18, r.id + 500); // value label
         y += 28;
     }
 
     // 8 声道权重 Weights
-    GroupBox(hwnd_, L"8 声道权重 Weights", 10, 416, 500, 124);
-    Mk(hwnd_, L"BUTTON", L"重置 Reset", BS_PUSHBUTTON, 425, 418, 75, 22, IDC_BTN_RESETW);
+    Caption(L"8 声道权重 WEIGHTS", 16, 478, 488);
+    FlatButton(L"重置 Reset", 425, 476, 75, IDC_BTN_RESETW);
     for (int i = 0; i < 8; ++i) {
         int col = i % 4, row = i / 4;
         int x = 22 + col * 122;
-        int ly = 444 + row * 56;
-        Mk(hwnd_, L"STATIC", kWeightNames[i], SS_LEFT, x, ly, 40, 14, -1);
-        HWND s = Slider(hwnd_, x, ly + 14, 108, IDC_SLIDER_W0 + i, 0, kWMax);
+        int ly = 506 + row * 56;
+        HWND lb = Mk(L"STATIC", kWeightNames[i], SS_LEFT, x, ly, 40, 14, -1);
+        dimStatics_.push_back(lb);
+        HWND s = Slider(x, ly + 14, 108, IDC_SLIDER_W0 + i, 0, kWMax);
         SendMessageW(s, TBM_SETTICFREQ, 5, 0);
     }
 
     // 其他 Other
-    GroupBox(hwnd_, L"其他 Other", 10, 548, 500, 44);
-    Mk(hwnd_, L"BUTTON", L"声音分类 (实验性)", BS_AUTOCHECKBOX, 22, 568, 200, 20,
+    Caption(L"其他 MISC", 16, 596, 488);
+    Mk(L"BUTTON", L"声音分类 (实验性)", BS_AUTOCHECKBOX, 22, 628, 200, 20,
        IDC_CHK_CLASSIFY);
-    Mk(hwnd_, L"BUTTON", L"开机自启 Autostart", BS_AUTOCHECKBOX, 240, 568, 160, 20,
+    Mk(L"BUTTON", L"开机自启 Autostart", BS_AUTOCHECKBOX, 240, 628, 160, 20,
        IDC_CHK_AUTOSTART);
 
-    // buttons + status
-    Mk(hwnd_, L"BUTTON", L"退出程序 Exit", BS_PUSHBUTTON, 180, 604, 100, 26, IDC_BTN_EXIT);
-    Mk(hwnd_, L"BUTTON", L"应用 Apply", BS_PUSHBUTTON, 290, 604, 100, 26, IDC_BTN_APPLY);
-    Mk(hwnd_, L"BUTTON", L"确定 OK", BS_DEFPUSHBUTTON, 400, 604, 100, 26, IDC_BTN_OK);
-    Mk(hwnd_, L"STATIC", L"", SS_LEFT | SS_NOPREFIX, 10, 640, 500, 52, IDC_STATUS,
-       WS_EX_CLIENTEDGE);
+    // buttons + status strip
+    FlatButton(L"退出程序 Exit", 180, 666, 100, IDC_BTN_EXIT);
+    FlatButton(L"应用 Apply", 290, 666, 100, IDC_BTN_APPLY);
+    FlatButton(L"确定 OK", 400, 666, 100, IDC_BTN_OK);
+    stripBg_ = Mk(L"STATIC", L"", SS_LEFT, 0, 702, 520, 50, -1); // status strip bg
+    Mk(L"STATIC", L"", SS_OWNERDRAW, 18, 712, 12, 12, IDC_STATUSDOT);
+    Mk(L"STATIC", L"", SS_LEFT | SS_NOPREFIX, 40, 706, 468, 42, IDC_STATUS);
 }
 
 void Gui::RefreshDevices() {
@@ -247,7 +366,6 @@ void Gui::RefreshDevices() {
         if (IsVirtualAudioName(d.name)) label += L" (虚拟)";
         SendMessageW(out, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(label.c_str()));
     }
-    // re-apply selection from config
     const AppConfig& cfg = *hooks_.cfg;
     auto selectByName = [](HWND combo, const std::wstring& name) {
         int n = static_cast<int>(SendMessageW(combo, CB_GETCOUNT, 0, 0));
@@ -408,12 +526,83 @@ void Gui::Apply() {
 
 LRESULT Gui::HandleMessage(UINT msg, WPARAM wp, LPARAM lp) {
     switch (msg) {
+        case WM_ERASEBKGND: {
+            HDC dc = reinterpret_cast<HDC>(wp);
+            RECT rc;
+            GetClientRect(hwnd_, &rc);
+            FillRect(dc, &rc, bgBrush_);
+            return 1;
+        }
+        case WM_CTLCOLORSTATIC: {
+            HDC dc = reinterpret_cast<HDC>(wp);
+            HWND child = reinterpret_cast<HWND>(lp);
+            SetBkMode(dc, TRANSPARENT);
+            for (HWND c : accentStatics_)
+                if (c == child) {
+                    SetTextColor(dc, kAccent);
+                    return reinterpret_cast<LRESULT>(bgBrush_);
+                }
+            for (HWND c : dimStatics_)
+                if (c == child) {
+                    SetTextColor(dc, RGB(0x8a, 0x90, 0xa0));
+                    return reinterpret_cast<LRESULT>(bgBrush_);
+                }
+            int id = GetDlgCtrlID(child);
+            if (child == stripBg_ || id == IDC_STATUS) {
+                SetTextColor(dc, kText);
+                return reinterpret_cast<LRESULT>(stripBrush_);
+            }
+            for (HWND c : sepStatics_)
+                if (c == child) {
+                    SetTextColor(dc, kSep);
+                    SetBkColor(dc, kSep);
+                    return reinterpret_cast<LRESULT>(sepBrush_);
+                }
+            SetTextColor(dc, kText);
+            SetBkColor(dc, kBg);
+            return reinterpret_cast<LRESULT>(bgBrush_);
+        }
+        case WM_CTLCOLORBTN: { // radios / checkboxes
+            HDC dc = reinterpret_cast<HDC>(wp);
+            SetBkMode(dc, TRANSPARENT);
+            SetTextColor(dc, kText);
+            return reinterpret_cast<LRESULT>(bgBrush_);
+        }
+        case WM_CTLCOLORLISTBOX: // combo dropdown list
+        case WM_CTLCOLOREDIT: {
+            HDC dc = reinterpret_cast<HDC>(wp);
+            SetTextColor(dc, kText);
+            SetBkColor(dc, kPanel);
+            return reinterpret_cast<LRESULT>(stripBrush_);
+        }
+        case WM_DRAWITEM: {
+            LPDRAWITEMSTRUCT dis = reinterpret_cast<LPDRAWITEMSTRUCT>(lp);
+            if (dis->CtlType == ODT_BUTTON) {
+                DrawButton(dis);
+                return TRUE;
+            }
+            if (dis->CtlType == ODT_STATIC && dis->CtlID == IDC_STATUSDOT) {
+                DrawStatusDot(dis);
+                return TRUE;
+            }
+            return FALSE;
+        }
         case WM_HSCROLL:
             UpdateSliderLabels();
             return 0;
         case WM_TIMER:
-            if (wp == kStatusTimer && hooks_.statusText)
-                SetWindowTextW(GetDlgItem(hwnd_, IDC_STATUS), hooks_.statusText().c_str());
+            if (wp == kStatusTimer) {
+                if (hooks_.statusText)
+                    SetWindowTextW(GetDlgItem(hwnd_, IDC_STATUS),
+                                   hooks_.statusText().c_str());
+                if (hooks_.statusLevel) {
+                    int lv = hooks_.statusLevel();
+                    if (lv != statusLevel_) {
+                        statusLevel_ = lv;
+                        InvalidateRect(GetDlgItem(hwnd_, IDC_STATUSDOT), nullptr, TRUE);
+                    }
+                }
+            }
             return 0;
         case WM_COMMAND:
             switch (LOWORD(wp)) {
@@ -444,7 +633,13 @@ LRESULT Gui::HandleMessage(UINT msg, WPARAM wp, LPARAM lp) {
             return 0;
         case WM_DESTROY:
             if (font_) DeleteObject(font_);
+            if (titleFont_) DeleteObject(titleFont_);
+            if (bgBrush_) DeleteObject(bgBrush_);
+            if (stripBrush_) DeleteObject(stripBrush_);
+            if (sepBrush_) DeleteObject(sepBrush_);
             font_ = nullptr;
+            titleFont_ = nullptr;
+            bgBrush_ = stripBrush_ = sepBrush_ = nullptr;
             return 0;
         default:
             return DefWindowProcW(hwnd_, msg, wp, lp);
