@@ -9,6 +9,7 @@
 #include <functional>
 #include <string>
 #include <vector>
+#include <atomic>
 
 namespace sr {
 
@@ -40,6 +41,9 @@ public:
     const Format& GetFormat() const { return fmt_; }
     const std::wstring& DeviceName() const { return deviceName_; }
 
+    // Glitch telemetry: packet gaps (>3x device period) since last call.
+    uint64_t GetPacketGaps() { return gapCount_.exchange(0); }
+
 private:
     Microsoft::WRL::ComPtr<IMMDevice> device_;
     Microsoft::WRL::ComPtr<IAudioClient> client_;
@@ -48,6 +52,7 @@ private:
     Format fmt_;
     std::wstring deviceName_;
     std::vector<float> staging_;
+    std::atomic<uint64_t> gapCount_{0};
 };
 
 } // namespace sr

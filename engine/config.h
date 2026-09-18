@@ -30,6 +30,7 @@ struct AppConfig {
     OverlayConfig overlay;
     bool autostart = false;       // consumed by the autostart milestone
     bool classifyEnabled = true;  // experimental sound classification display
+    bool renderExclusive = false; // shared mode by default; exclusive crackles on some USB DACs
 };
 
 // Default path: %APPDATA%/SoundRadar/config.json

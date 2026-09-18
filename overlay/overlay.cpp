@@ -15,6 +15,7 @@
 // the GPU, so a frame is just a few draw calls + Present.
 #include "overlay.h"
 
+#include "../engine/log.h"          // sr::Log
 #include "../engine/wasapi_util.h" // ComInit
 
 #include <d2d1_1.h>
@@ -191,9 +192,13 @@ void DrawScene(ID2D1RenderTarget* rt, const SceneResources& res, const OverlayCo
     float maxLvl = 0.0f;
     for (int c = 0; c < 8; ++c) if (levels[c] > maxLvl) maxLvl = levels[c];
 
-    // hollow ring; LFE brightens it
+    // hollow ring; LFE brightens it. Dark underlay + light core: readable on
+    // both dark game scenes and bright backgrounds (HUD convention).
     float ringAlpha = 0.25f + 0.45f * levels[3];
     float ringStroke = 2.0f + 1.5f * levels[3];
+    res.brush->SetColor(D2D1::ColorF(0, 0, 0, 0.35f + 0.30f * levels[3]));
+    rt->DrawEllipse(D2D1::Ellipse(D2D1::Point2F(cx, cy), r, r), res.brush.Get(),
+                    ringStroke + 2.0f);
     res.brush->SetColor(D2D1::ColorF(1, 1, 1, ringAlpha));
     rt->DrawEllipse(D2D1::Ellipse(D2D1::Point2F(cx, cy), r, r), res.brush.Get(), ringStroke);
 
@@ -333,7 +338,8 @@ struct CpuProbe {
 
 Overlay::~Overlay() { Stop(); }
 
-bool Overlay::Start(const OverlayConfig& cfg, SharedMeters* meters, HANDLE quitEvent) {
+bool Overlay::Start(const OverlayConfig& cfg, SharedMeters* meters, HANDLE quitEvent,
+                    bool visible) {
     if (running_.load()) return true;
     cfg_ = cfg;
     {
@@ -350,7 +356,7 @@ bool Overlay::Start(const OverlayConfig& cfg, SharedMeters* meters, HANDLE quitE
     frames_.store(0);
     appliedVersion_.store(0);
     hwnd_.store(nullptr);
-    thread_ = std::thread(&Overlay::ThreadMain, this);
+    thread_ = std::thread(&Overlay::ThreadMain, this, visible);
     return true;
 }
 
@@ -375,7 +381,7 @@ void Overlay::ResetStats() {
     activeCpu_ = activeWall_ = idleCpu_ = idleWall_ = 0;
 }
 
-void Overlay::ThreadMain() {
+void Overlay::ThreadMain(bool visible) {
     running_.store(true);
     ComInit com;
     if (!com.Ok()) {
@@ -407,9 +413,11 @@ void Overlay::ThreadMain() {
         running_.store(false);
         return;
     }
-    // Never visible: created without WS_VISIBLE and never shown. All visual
-    // verification goes through --simulate-screenshot (WIC/BMP), not the screen.
+    // visible=false is for headless tests only: a hidden window is never
+    // composed by DWM, so nothing would reach the screen in production.
+    if (visible) ShowWindow(hwnd, SW_SHOWNA); // shown, but never takes focus
     hwnd_.store(hwnd);
+    sr::Log("overlay: window created (visible=%d)", visible ? 1 : 0);
 
     // --- D3D11 -> DXGI -> D2D device context -------------------------------
     ComPtr<ID3D11Device> d3d;
@@ -473,6 +481,8 @@ void Overlay::ThreadMain() {
     if (SUCCEEDED(hr))
         hr = CreateSceneResources(d2dFactory.Get(), dwFactory.Get(), dc.Get(), cfg_, w, h, res);
     initOk = SUCCEEDED(hr);
+    sr::Log("overlay: device init %s (hr=0x%08lx)", initOk ? "ok" : "FAILED",
+            (unsigned long)hr);
     if (!initOk)
         fwprintf(stderr, L"overlay: device init failed (hr=0x%08lx)\n",
                  static_cast<unsigned long>(hr));
@@ -490,6 +500,7 @@ void Overlay::ThreadMain() {
 
     // --- render loop: ~60 fps while audio active, ~4 fps polling when idle --
     HANDLE waits[2] = { quitEvent_, stopEvent_ };
+    int presentLogCount = 0;
     while (initOk) {
         // drain any window messages (rare: we never take input)
         MSG msg;
@@ -559,11 +570,15 @@ void Overlay::ThreadMain() {
                 fhr = dc->EndDraw();
                 dc->SetTarget(nullptr);
             }
-            // DO_NOT_WAIT: the window is hidden, so DWM never consumes frames;
-            // a blocking Present would deadlock once the flip queue fills.
-            if (SUCCEEDED(fhr)) fhr = swapchain->Present(0, DXGI_PRESENT_DO_NOT_WAIT);
+            // Hidden window (tests): DWM never consumes frames, so a blocking
+            // Present would deadlock once the flip queue fills -> DO_NOT_WAIT.
+            if (SUCCEEDED(fhr))
+                fhr = swapchain->Present(0, visible ? 0 : DXGI_PRESENT_DO_NOT_WAIT);
             if (fhr == DXGI_ERROR_WAS_STILL_DRAWING) fhr = S_OK; // dropped frame, fine
             if (SUCCEEDED(fhr)) fhr = dcompDevice->Commit();
+            if (presentLogCount < 10)
+                sr::Log("overlay: present[%d] hr=0x%08lx", presentLogCount++,
+                        (unsigned long)fhr);
             if (fhr == D2DERR_RECREATE_TARGET || fhr == DXGI_ERROR_DEVICE_REMOVED ||
                 fhr == DXGI_ERROR_DEVICE_RESET) {
                 fwprintf(stderr, L"overlay: device lost, stopping overlay\n");

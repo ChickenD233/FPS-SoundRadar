@@ -1,5 +1,7 @@
 #include "render.h"
 
+#include "log.h"
+
 #include <avrt.h>
 #include <functiondiscoverykeys_devpkey.h>
 #include <ksmedia.h>
@@ -55,7 +57,8 @@ bool RenderClient::TryInitialize(const WAVEFORMATEX* wfx, bool exclusive,
     return SUCCEEDED(hr);
 }
 
-bool RenderClient::Init(const std::wstring& nameSub, std::wstring& err) {
+bool RenderClient::Init(const std::wstring& nameSub, bool allowExclusive,
+                        std::wstring& err) {
     if (nameSub.empty()) {
         device_ = GetDefaultEndpoint(eRender);
         // Never auto-select a virtual endpoint: if the Windows default output
@@ -130,20 +133,23 @@ bool RenderClient::Init(const std::wstring& nameSub, std::wstring& err) {
     const WAVEFORMATEX* chosen = nullptr;
     bool exclusive = false;
 
-    // 1) Exclusive, 10 ms buffer / 10 ms period. (5 ms crackles on some USB
-    //    devices; 10 ms keeps end-to-end under the 30 ms budget.)
-    for (const WAVEFORMATEX* c : candidates) {
-        if (TryInitialize(c, true, 100000, 100000)) {
-            chosen = c;
-            exclusive = true;
-            break;
+    // 1) Exclusive (opt-in via config render_exclusive): 10 ms buffer/period.
+    //    Shorter buffers crackle on some USB DACs ("current noise" bug report).
+    if (allowExclusive) {
+        for (const WAVEFORMATEX* c : candidates) {
+            if (TryInitialize(c, true, 100000, 100000)) {
+                chosen = c;
+                exclusive = true;
+                break;
+            }
         }
     }
-    // 2) Shared, 10 ms buffer. Mix format is tried last.
+    // 2) Shared (default), 10 ms buffer. Mix format is tried last.
     if (!chosen) {
-        fwprintf(stderr,
-                 L"render: exclusive mode unavailable, falling back to shared mode "
-                 L"(higher latency)\n");
+        if (allowExclusive)
+            fwprintf(stderr,
+                     L"render: exclusive mode unavailable, falling back to shared mode "
+                     L"(higher latency)\n");
         for (const WAVEFORMATEX* c : candidates) {
             if (TryInitialize(c, false, 100000, 0)) {
                 chosen = c;
@@ -195,8 +201,19 @@ bool RenderClient::Init(const std::wstring& nameSub, std::wstring& err) {
     resBuf_.resize((static_cast<size_t>(bufferFrames) + 64) * 2);
     tmpBuf_.resize((static_cast<size_t>(bufferFrames) + 64) * fmt_.channels);
 
+    sr::Log("render: %s on %s: %lu Hz, %lu ch, %lu bit %s, buffer %lu frames (%.1f ms)",
+            exclusive ? "EXCLUSIVE" : "shared", sr::ToUtf8(deviceName_).c_str(),
+            (unsigned long)fmt_.sampleRate, (unsigned long)fmt_.channels,
+            (unsigned long)fmt_.pcm.bits, fmt_.pcm.isFloat ? "float" : "pcm",
+            (unsigned long)bufferFrames, fmt_.bufferMs);
+
     CoTaskMemFree(mix);
     return true;
+}
+
+void RenderClient::GetPaddingStats(uint32_t& padMin, uint32_t& padMax) {
+    padMin = padMin_.exchange(0xFFFFFFFF);
+    padMax = padMax_.exchange(0);
 }
 
 bool RenderClient::EstimateQueuedFrames(uint64_t& framesAhead) {
@@ -248,6 +265,12 @@ void RenderClient::Run(const Pull& pull, HANDLE quitEvent) {
         if (FAILED(client_->GetCurrentPadding(&pad))) break;
         UINT32 avail = fmt_.bufferFrames - pad;
         if (avail == 0) continue;
+        { // glitch telemetry: padding jitter
+            uint32_t lo = padMin_.load(std::memory_order_relaxed);
+            while (pad < lo && !padMin_.compare_exchange_weak(lo, pad)) {}
+            uint32_t hi = padMax_.load(std::memory_order_relaxed);
+            while (pad > hi && !padMax_.compare_exchange_weak(hi, pad)) {}
+        }
 
         // Engine produces this many 48k stereo frames for `avail` device frames.
         uint32_t inFrames = needResample
