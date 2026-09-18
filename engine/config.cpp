@@ -137,6 +137,9 @@ bool LoadConfig(const std::wstring& path, AppConfig& cfg) {
     if (GetNumber(json, "overlay_high", d)) cfg.overlay.highThreshold = static_cast<float>(d);
     if (GetNumber(json, "radar_x", d)) cfg.overlay.offsetX = static_cast<int>(d);
     if (GetNumber(json, "radar_y", d)) cfg.overlay.offsetY = static_cast<int>(d);
+    // migration: old defaults (172/180 px below center) -> exact center
+    if (cfg.overlay.offsetY == 172 || cfg.overlay.offsetY == 180)
+        cfg.overlay.offsetY = 0;
     if (GetNumber(json, "radar_radius", d)) cfg.overlay.radius = static_cast<int>(d);
     if (GetNumber(json, "overlay_fx", d)) cfg.overlay.fxPct = static_cast<int>(d);
     GetBool(json, "classify_enabled", cfg.classifyEnabled);

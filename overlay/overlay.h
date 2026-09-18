@@ -7,8 +7,10 @@
 
 #include <atomic>
 #include <cstdint>
+#include <mutex>
 #include <string>
 #include <thread>
+#include <vector>
 
 #include "../engine/config.h" // OverlayConfig
 #include "../engine/meters.h" // SharedMeters
@@ -35,6 +37,12 @@ public:
     // g_overlay.config version the render thread has applied (hot-apply check).
     uint32_t AppliedVersion() const { return appliedVersion_.load(); }
 
+    // Test hook: current smoothed arrow angles (degrees). Used by orbit tests.
+    std::vector<float> DebugArrowAngles() const {
+        std::lock_guard<std::mutex> lk(debugMu_);
+        return debugAngles_;
+    }
+
     // Self-measured CPU of the render thread, split into active (~60 fps
     // drawing) and idle (~4 fps polling) buckets since the last ResetStats().
     struct Stats {
@@ -57,6 +65,8 @@ private:
     std::atomic<HWND> hwnd_{nullptr};
     std::atomic<uint64_t> frames_{0};
     std::atomic<uint32_t> appliedVersion_{0};
+    mutable std::mutex debugMu_;
+    std::vector<float> debugAngles_; // snapshot for DebugArrowAngles
     std::atomic<uint64_t> activeCpu_{0}, activeWall_{0};
     std::atomic<uint64_t> idleCpu_{0}, idleWall_{0};
 };

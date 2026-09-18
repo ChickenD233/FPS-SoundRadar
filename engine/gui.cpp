@@ -225,6 +225,7 @@ void Gui::BuildControls() {
        IDC_CHK_AUTOSTART);
 
     // buttons + status
+    Mk(hwnd_, L"BUTTON", L"退出程序 Exit", BS_PUSHBUTTON, 180, 604, 100, 26, IDC_BTN_EXIT);
     Mk(hwnd_, L"BUTTON", L"应用 Apply", BS_PUSHBUTTON, 290, 604, 100, 26, IDC_BTN_APPLY);
     Mk(hwnd_, L"BUTTON", L"确定 OK", BS_DEFPUSHBUTTON, 400, 604, 100, 26, IDC_BTN_OK);
     Mk(hwnd_, L"STATIC", L"", SS_LEFT | SS_NOPREFIX, 10, 640, 500, 52, IDC_STATUS,
@@ -422,6 +423,9 @@ LRESULT Gui::HandleMessage(UINT msg, WPARAM wp, LPARAM lp) {
                 case IDC_BTN_OK:
                     Apply();
                     Hide();
+                    return 0;
+                case IDC_BTN_EXIT:
+                    if (hooks_.onExit) hooks_.onExit(); // real exit (same path as tray)
                     return 0;
                 case IDC_BTN_RESETW:
                     for (int i = 0; i < 8; ++i)

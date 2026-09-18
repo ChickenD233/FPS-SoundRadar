@@ -34,6 +34,7 @@ enum GuiControlId {
     IDC_STATUS,
     IDC_BTN_APPLY,
     IDC_BTN_OK,
+    IDC_BTN_EXIT,
 };
 
 extern const wchar_t* kGuiClassName;       // "SoundRadarMainWnd" (singleton lookup)
@@ -47,6 +48,7 @@ public:
         // devChanged = input/output device selection changed (pipeline restart)
         std::function<void(bool devChanged)> onApply;
         std::function<std::wstring()> statusText; // status bar provider (500 ms)
+        std::function<void()> onExit;           // 退出程序 button: real app exit
     };
 
     bool Create(const Hooks& hooks, bool hidden); // false = creation failed
