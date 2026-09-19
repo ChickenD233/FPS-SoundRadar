@@ -18,6 +18,7 @@ struct OverlayConfig {
     int offsetY = 0;          // radar center offset from screen center, px (down positive)
     int radius = 90;          // radar ring radius, px
     int fxPct = 85;           // effects intensity 0-100 (glow/pulse; 0 = flat minimal)
+    float sensitivity = 2.0f; // display gain 0.5-4.0, applied after sqrt mapping
 };
 
 struct AppConfig {

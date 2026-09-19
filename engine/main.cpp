@@ -708,8 +708,8 @@ int RunGuiTest() {
         L"+';checks='+document.querySelectorAll('input[type=checkbox]').length"
         L"+';buttons='+document.querySelectorAll('button').length)", inv);
     std::printf("  dom inventory: %s\n", sr::ToUtf8(inv).c_str());
-    check("dom: 15 sliders, 2 selects, 3 toggles, 7 buttons",
-          evalOk && inv.find(L"ranges=15") != std::wstring::npos &&
+    check("dom: 16 sliders, 2 selects, 3 toggles, 7 buttons",
+          evalOk && inv.find(L"ranges=16") != std::wstring::npos &&
           inv.find(L"selects=2") != std::wstring::npos &&
           inv.find(L"checks=3") != std::wstring::npos &&
           inv.find(L"buttons=7") != std::wstring::npos);
