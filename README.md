@@ -10,7 +10,7 @@ Game-audio direction radar for players who are deaf in one ear. Built for Valora
 
 FPS-SoundRadar gives you two things:
 
-1. **A visual radar for sound direction.** A click-through overlay shows which of the 8 surround channels carries sound right now. Each direction stays independent: front-left plus back-right shows two sectors, never a fake "front center".
+1. **A visual radar for sound direction.** A click-through overlay points small chevron arrows on an invisible ring toward each live sound source, plus bright bands along the screen edges. Each direction stays independent: front-left plus back-right shows two arrows, never a fake "front center".
 2. **Right-ear mono downmix.** All 8 channels mix into the right ear with adjustable weights. No sound from rear, center, or side channels gets lost.
 
 ### How it works
@@ -26,7 +26,7 @@ Game → SoundRadar VAD (virtual 7.1 driver) → loopback capture → SoundRadar
 
 ### Features
 
-- 7.1 per-channel radar sectors and screen-edge bands, color-graded by loudness (green far, yellow mid, red near; thresholds adjustable).
+- Direction arrows on an invisible ring (continuous 360° tracking, one arrow per simultaneous source) and screen-edge bands, color-graded by loudness (green far, yellow mid, red near; thresholds adjustable). Display sensitivity adjustable for quiet footsteps.
 - 300–500 ms fade-out and smoothing, no flicker.
 - Overlay: topmost, fully click-through, never steals focus. CPU under 5% while active, near zero when idle.
 - Downmix modes: right-ear mono (default) and standard stereo.
@@ -55,9 +55,18 @@ Driver signing decides which script you use. Read `docs/signing.md` first.
 
 Remove with `scripts/uninstall-driver.ps1`.
 
-### Free alternative: Voicemeeter Potato
+### Free path (no driver): VB-CABLE
 
-No driver install needed. Voicemeeter Potato (donationware) can carry the 7.1 signal instead of the SoundRadar VAD.
+The simplest setup, and the right one for machines with kernel anti-cheat (Vanguard / ACE): no unsigned driver, nothing in test mode. [VB-CABLE](https://vb-audio.com/Cable/) (donationware, digitally signed) carries the 7.1 signal.
+
+1. Install VB-CABLE, reboot. In Windows sound settings set the playback device "CABLE In 16 Ch" (or "CABLE Input") as default, then Configure it as 7.1 surround.
+2. Run `SoundRadar.exe`. Capture auto-selects "CABLE Output" (8 channels); set Output to your real headphones and Apply. The engine does the downmix.
+
+Fallback order for capture when `capture_device` is the default `"SoundRadar"`: VAD loopback → CABLE Output → Voicemeeter Out B1 → Voicemeeter Output. A custom substring can be set in `%APPDATA%\SoundRadar\config.json`.
+
+### Alternative: Voicemeeter Potato
+
+[Voicemeeter Potato](https://vb-audio.com/Voicemeeter/potato.htm) (donationware) can also carry the 7.1 signal and do the downmix itself.
 
 1. Install Voicemeeter Potato. Set the game output device to "Voicemeeter Input". Configure that device as 7.1 in Windows.
 2. In Potato: route the input strip to the B1 bus with the 8-channel patch. On the A1 bus (your headphones), mix all channels into the right ear.
@@ -65,9 +74,8 @@ No driver install needed. Voicemeeter Potato (donationware) can carry the 7.1 si
 
 Notes:
 
-- Potato does the downmix in this setup. The engine downmix becomes optional. This path gives the lowest latency, because Potato mixes before the engine sees the signal.
+- Potato does the downmix in this setup. The engine downmix becomes optional.
 - The capture stream can have fewer than 8 channels. Channels map in FL FR C LFE BL BR SL SR order. Missing channels stay silent on the radar.
-- The config key `capture_device` in `%APPDATA%\SoundRadar\config.json` overrides the capture endpoint substring. Default `"SoundRadar"`: match the VAD loopback first, then Voicemeeter B1, then Voicemeeter Output.
 - The SoundRadar VAD driver path above stays the self-contained option: no extra software, and the engine does the downmix.
 
 ### Run
@@ -90,7 +98,7 @@ Useful CLI flags: `--list-devices`, `--mode right-mono|stereo`, `--output <name>
 
 FPS-SoundRadar 提供两个功能：
 
-1. **声音方向可视化**。一个鼠标完全穿透的置顶 Overlay，实时显示 8 个环绕声道中哪个方向有声音。各方向独立显示：前左和后右同时发声就显示两个扇区，绝不合并成虚假的"正前方"。
+1. **声音方向可视化**。一个鼠标完全穿透的置顶 Overlay，在隐形圆环上用小箭头实时指向每个声源方向，屏幕四边还有高亮条带。各方向独立显示：前左和后右同时发声就显示两个箭头，绝不合并成虚假的"正前方"。
 2. **右耳单声道下混**。8 个声道按可调权重全部混入右耳。后置、中置、侧置声道的声音一个都不丢。
 
 ### 工作原理
@@ -106,7 +114,7 @@ FPS-SoundRadar 提供两个功能：
 
 ### 功能
 
-- 7.1 逐声道雷达扇区 + 屏幕四边条带，按响度分级变色（绿=远、黄=中、红=近，阈值可调）。
+- 隐形圆环上的方向箭头（360° 连续跟踪，每个声源一个箭头）+ 屏幕四边条带，按响度分级变色（绿=远、黄=中、红=近，阈值可调）。显示灵敏度可调，轻微脚步也可见。
 - 声音消失后 300–500 ms 渐隐，平滑滤波防闪烁。
 - Overlay 置顶、完全点击穿透、不抢焦点。工作时 CPU 低于 5%，空闲接近零。
 - 下混模式：右耳单声道（默认）和标准立体声。
@@ -135,9 +143,18 @@ cmake --build build --config Release
 
 卸载用 `scripts/uninstall-driver.ps1`。
 
-### 免费替代方案：Voicemeeter Potato
+### 免费方案（免驱动）：VB-CABLE
 
-不装驱动也能用。Voicemeeter Potato（免费捐赠软件）可以代替 SoundRadar VAD 传输 7.1 信号。
+最简单的方案，也是装有内核级反作弊（Vanguard / ACE）机器的正确选择：不用未签名驱动、不用开测试模式。[VB-CABLE](https://vb-audio.com/Cable/)（免费捐赠软件，带微软数字签名）负责传输 7.1 信号。
+
+1. 安装 VB-CABLE 并重启。在 Windows 声音设置里把播放设备 "CABLE In 16 Ch"（或 "CABLE Input"）设为默认，然后右键配置扬声器选 7.1 环绕。
+2. 运行 `SoundRadar.exe`。捕获会自动选中 "CABLE Output"（8 声道）；输出选你的真实耳机，点应用。下混由引擎完成。
+
+`capture_device` 为默认 `"SoundRadar"` 时捕获的自动匹配顺序：VAD 回路 → CABLE Output → Voicemeeter Out B1 → Voicemeeter Output。可在 `%APPDATA%\SoundRadar\config.json` 里自定义匹配子串。
+
+### 替代方案：Voicemeeter Potato
+
+[Voicemeeter Potato](https://vb-audio.com/Voicemeeter/potato.htm)（免费捐赠软件）也能传输 7.1 信号，并由它自己完成下混。
 
 1. 安装 Voicemeeter Potato。游戏输出设备选 "Voicemeeter Input"，并在 Windows 里把它配置为 7.1。
 2. 在 Potato 里：输入条用 8 声道补丁路由到 B1 总线。在 A1 总线（你的耳机）上把所有声道混进右耳。
@@ -145,9 +162,8 @@ cmake --build build --config Release
 
 说明：
 
-- 此方案由 Potato 完成下混，引擎下混变为可选。延迟最低，因为 Potato 在引擎之前完成混音。
+- 此方案由 Potato 完成下混，引擎下混变为可选。
 - 捕获流可以少于 8 声道。声道按 FL FR C LFE BL BR SL SR 顺序映射，缺失声道在雷达上保持静默。
-- 配置文件 `%APPDATA%\SoundRadar\config.json` 里的 `capture_device` 可覆盖捕获端点子串。默认 `"SoundRadar"`：先匹配 VAD 回路，再试 Voicemeeter B1，再试 Voicemeeter Output。
 - 上面的 SoundRadar VAD 驱动路径仍是自包含方案：不装第三方软件，由引擎完成下混。
 
 ### 运行
