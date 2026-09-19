@@ -542,7 +542,7 @@ int RunOverlayTest(sr::AppConfig cfg, const std::wstring& shotPath) {
     }
     {
         float sweepLevels[8] = {};
-        sweepLevels[7] = 0.85f;
+        sweepLevels[7] = 0.28f; // quiet: green, flat & long jelly ribbon
         std::wstring p = baseName(L"sweep");
         bool ok = sr::RenderSceneToFile(p, w, h, sweepLevels, nullptr, cfg.overlay);
         std::printf("screenshot: %s (%s)\n", sr::ToUtf8(p).c_str(), ok ? "written" : "FAILED");
@@ -708,8 +708,8 @@ int RunGuiTest() {
         L"+';checks='+document.querySelectorAll('input[type=checkbox]').length"
         L"+';buttons='+document.querySelectorAll('button').length)", inv);
     std::printf("  dom inventory: %s\n", sr::ToUtf8(inv).c_str());
-    check("dom: 16 sliders, 2 selects, 3 toggles, 7 buttons",
-          evalOk && inv.find(L"ranges=16") != std::wstring::npos &&
+    check("dom: 18 sliders, 2 selects, 3 toggles, 7 buttons",
+          evalOk && inv.find(L"ranges=18") != std::wstring::npos &&
           inv.find(L"selects=2") != std::wstring::npos &&
           inv.find(L"checks=3") != std::wstring::npos &&
           inv.find(L"buttons=7") != std::wstring::npos);
