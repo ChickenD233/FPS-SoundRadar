@@ -73,6 +73,12 @@ body {
   display: flex; align-items: center; gap: 8px;
 }
 .card h2::after { content: ""; flex: 1; height: 1px; background: rgba(0,210,200,.18); }
+.card h3 {
+  font-size: 10px; font-weight: 600; letter-spacing: 1.2px;
+  color: var(--dim); margin: 12px 0 4px;
+  display: flex; align-items: center; gap: 8px;
+}
+.card h3::after { content: ""; flex: 1; height: 1px; background: rgba(255,255,255,.07); }
 .row { display: flex; align-items: center; gap: 8px; margin: 6px 0; }
 .row label { width: 88px; color: var(--dim); flex: none; }
 
@@ -204,14 +210,18 @@ footer {
   <div class="row"><label class="tgl-label">显示声纹</label>
     <label class="tgl"><input type="checkbox" id="ovOn"><span class="tr"></span></label>
   </div>
-  <div class="row"><label>渐隐时间</label><input type="range" id="fade" min="300" max="500" step="10"><span class="val" id="fadeV"></span></div>
+  <h3>内圈 · 方向箭头 INNER ARROWS</h3>
   <div class="row"><label>雷达大小</label><input type="range" id="radius" min="60" max="160" step="1"><span class="val" id="radiusV"></span></div>
-  <div class="row"><label>阈值 绿→黄</label><input type="range" id="low" min="5" max="95" step="1"><span class="val" id="lowV"></span></div>
-  <div class="row"><label>阈值 黄→红</label><input type="range" id="high" min="5" max="95" step="1"><span class="val" id="highV"></span></div>
   <div class="row"><label>位置X</label><input type="range" id="posX" min="-50" max="50" step="1"><span class="val" id="posXV"></span></div>
   <div class="row"><label>位置Y</label><input type="range" id="posY" min="0" max="50" step="1"><span class="val" id="posYV"></span></div>
-  <div class="row"><label>特效强度</label><input type="range" id="fx" min="0" max="100" step="1"><span class="val" id="fxV"></span></div>
   <div class="row"><label>灵敏度 Sens.</label><input type="range" id="sens" min="50" max="400" step="10"><span class="val" id="sensV"></span></div>
+  <div class="row"><label>渐隐时间</label><input type="range" id="fade" min="300" max="500" step="10"><span class="val" id="fadeV"></span></div>
+  <h3>外圈 · 边缘条带 EDGE BANDS</h3>
+  <div class="row"><label>条带粗细</label><input type="range" id="edgeW" min="50" max="250" step="5"><span class="val" id="edgeWV"></span></div>
+  <div class="row"><label>条带长度</label><input type="range" id="edgeL" min="50" max="250" step="5"><span class="val" id="edgeLV"></span></div>
+  <div class="row"><label>特效强度</label><input type="range" id="fx" min="0" max="100" step="1"><span class="val" id="fxV"></span></div>
+  <div class="row"><label>阈值 绿→黄</label><input type="range" id="low" min="5" max="95" step="1"><span class="val" id="lowV"></span></div>
+  <div class="row"><label>阈值 黄→红</label><input type="range" id="high" min="5" max="95" step="1"><span class="val" id="highV"></span></div>
 </div>
 
 <div class="card">
@@ -281,6 +291,8 @@ bindSlider('posX', v => (v>0?'+':'') + v + '%');
 bindSlider('posY', v => v + '%');
 bindSlider('fx', v => v + '%');
 bindSlider('sens', v => (v/100).toFixed(2) + 'x');
+bindSlider('edgeW', v => v + '%');
+bindSlider('edgeL', v => v + '%');
 for (let i = 0; i < 8; i++) bindSlider('w' + i, v => (v/100).toFixed(2));
 
 function setMode(m) { /* mode UI removed: always stereo */ }
@@ -308,6 +320,8 @@ function applyState(s) {
   set('low', Math.round(c.overlay_low*100)); set('high', Math.round(c.overlay_high*100));
   set('posX', c.pos_x_pct); set('posY', c.pos_y_pct); set('fx', c.overlay_fx);
   if (c.sensitivity !== undefined) set('sens', Math.round(c.sensitivity*100));
+  if (c.edge_width !== undefined) set('edgeW', c.edge_width);
+  if (c.edge_len !== undefined) set('edgeL', c.edge_len);
   for (let i = 0; i < 8; i++) set('w' + i, Math.round(c.weights[i]*100));
   const dot = $('dot');
   dot.className = 'dot ' + (s.status.running ? 'ok' : (s.status.error ? 'err' : 'warn'));
@@ -335,6 +349,8 @@ function collectConfig() {
     pos_y_pct: +$('posY').value,
     overlay_fx: +$('fx').value,
     sensitivity: (+$('sens').value)/100,
+    edge_width: +$('edgeW').value,
+    edge_len: +$('edgeL').value,
     weights: [0,1,2,3,4,5,6,7].map(i => (+$('w'+i).value)/100)
   };
 }

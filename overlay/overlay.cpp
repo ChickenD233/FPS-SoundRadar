@@ -325,12 +325,14 @@ HRESULT CreateSceneResources(ID2D1Factory* d2dFactory, IDWriteFactory* dwFactory
     return hr;
 }
 
-// Directional capsule on the screen border: project the tracked angle onto
-// the rounded-rect border (inset 10 px), draw a short glowing segment there,
-// tangent to the border. Slides along the edge as the angle moves.
+// Directional jelly ribbon on the screen border: project the tracked angle
+// onto the border rect (inset 10 px), draw a wavy lens-shaped band there.
+// Quiet/far = flat, long and green; loud/near = thick, short and red, with a
+// smooth morph between. Springy overshoot on onset plus a travelling sine
+// wobble keep it "bouncy". Slides along the edge as the angle moves.
 void DrawCapsule(ID2D1RenderTarget* rt, const SceneResources& res,
-                 const OverlayConfig& cfg, float angleDeg, float lvl, int w, int h,
-                 float fx, float timeSec) {
+                 const OverlayConfig& cfg, float angleDeg, float lvl, float pulse,
+                 int w, int h, float fx, float timeSec) {
     float cx = w * 0.5f + static_cast<float>(cfg.offsetX);
     float cy = h * 0.5f + static_cast<float>(cfg.offsetY);
     float rad = angleDeg * kPi / 180.0f;
@@ -349,101 +351,129 @@ void DrawCapsule(ID2D1RenderTarget* rt, const SceneResources& res,
     float hx = cx + tBest * dx, hy = cy + tBest * dy;
     bool horiz = (edge == 0 || edge == 2);
     float tx = horiz ? 1.0f : 0.0f, ty = horiz ? 0.0f : 1.0f; // tangent along border
+    // inward normal (into the screen): top +y, right -x, bottom -y, left +x
+    float inx = (edge == 3) ? 1.0f : (edge == 1) ? -1.0f : 0.0f;
+    float iny = (edge == 0) ? 1.0f : (edge == 2) ? -1.0f : 0.0f;
 
-    float len = 70.0f + 170.0f * lvl; // up to 240 px at max level
-    float thick = 13.0f;
-    D2D1_COLOR_F col = NeonColor(lvl, cfg);
+    float widMul = cfg.edgeWidthPct / 100.0f;
+    float lenMul = cfg.edgeLenPct / 100.0f;
 
-    auto seg = [&](float cx2, float cy2, float halfLen, float t, float alphaMul) {
+    // loudness morph: quiet = flat & long, loud = thick & short
+    float halfLen = (170.0f - 90.0f * lvl) * lenMul; // 170 -> 80 px
+    float halfTh  = (3.0f + 11.0f * lvl) * widMul;   // 3 -> 14 px
+
+    // jelly bounce: springy overshoot at onset + gentle breathing wobble
+    float bounce = 1.0f;
+    if (pulse > 0.0f && pulse < 1.0f)
+        bounce += 0.50f * std::sin(pulse * kPi)
+                + 0.22f * std::sin(pulse * 2.0f * kPi) * (1.0f - pulse);
+    bounce += 0.06f * std::sin(timeSec * 5.5f) * fx;
+    halfTh *= bounce;
+    halfLen *= 1.0f - 0.15f * (bounce - 1.0f); // thicker -> a bit shorter
+
+    const int K = 26; // ribbon samples per edge
+    float waveAmp = (1.5f + 3.5f * lvl) * fx;
+    float phase = timeSec * 6.0f;
+
+    // lens-shaped wavy ribbon; inner edge rides the border, band grows inward
+    auto buildRibbon = [&](float thickScale, float waveScale,
+                           ComPtr<ID2D1PathGeometry>* out) {
         ComPtr<ID2D1PathGeometry> geo;
         if (FAILED(res.factory->CreatePathGeometry(&geo))) return;
         ComPtr<ID2D1GeometrySink> sink;
         if (FAILED(geo->Open(&sink))) return;
-        sink->BeginFigure(D2D1::Point2F(cx2 - tx * halfLen, cy2 - ty * halfLen),
-                          D2D1_FIGURE_BEGIN_HOLLOW);
-        sink->AddLine(D2D1::Point2F(cx2 + tx * halfLen, cy2 + ty * halfLen));
-        sink->EndFigure(D2D1_FIGURE_END_OPEN);
+        for (int pass = 0; pass < 2; ++pass) {
+            int i0 = pass == 0 ? 0 : K, i1 = pass == 0 ? K : 0, di = pass == 0 ? 1 : -1;
+            float sign = pass == 0 ? -1.0f : 1.0f; // border side, then screen side
+            for (int i = i0;; i += di) {
+                float u = static_cast<float>(i) / K;         // 0..1 along band
+                float along = u * 2.0f - 1.0f;               // -1..1
+                float env = std::sin(u * kPi);               // pointed tips
+                float wave = waveAmp * waveScale * std::sin(phase + along * 5.0f) * env;
+                float th = halfTh * thickScale * (0.25f + 0.75f * env);
+                float px = hx + tx * along * halfLen + inx * (halfTh + wave + sign * th);
+                float py = hy + ty * along * halfLen + iny * (halfTh + wave + sign * th);
+                if (pass == 0 && i == 0)
+                    sink->BeginFigure(D2D1::Point2F(px, py), D2D1_FIGURE_BEGIN_FILLED);
+                else
+                    sink->AddLine(D2D1::Point2F(px, py));
+                if (i == i1) break;
+            }
+        }
+        sink->EndFigure(D2D1_FIGURE_END_CLOSED);
         sink->Close();
-        res.brush->SetColor(NeonColor(lvl, cfg, alphaMul));
-        rt->DrawGeometry(geo.Get(), res.brush.Get(), t, res.roundCaps.Get());
+        *out = geo;
     };
 
-    if (fx > 0.0f) { // two-layer halo
-        seg(hx, hy, len * 0.5f, thick + 20.0f * fx, 0.12f * fx);
-        seg(hx, hy, len * 0.5f, thick + 10.0f * fx, 0.24f * fx);
+    D2D1_COLOR_F col = NeonColor(lvl, cfg);
+
+    // halo: stroke the ribbon outline, two passes
+    ComPtr<ID2D1PathGeometry> ribbon;
+    buildRibbon(1.0f, 1.0f, &ribbon);
+    if (!ribbon) return;
+    if (fx > 0.0f) {
+        res.brush->SetColor(NeonColor(lvl, cfg, 0.10f * fx));
+        rt->DrawGeometry(ribbon.Get(), res.brush.Get(), 16.0f * fx, res.roundCaps.Get());
+        res.brush->SetColor(NeonColor(lvl, cfg, 0.20f * fx));
+        rt->DrawGeometry(ribbon.Get(), res.brush.Get(), 7.0f * fx, res.roundCaps.Get());
     }
-    // outline pass: slightly wider, saturated edge
-    seg(hx, hy, len * 0.5f, thick + 3.0f, 0.60f);
-    // main capsule: gradient dim->bright along its length
-    ComPtr<ID2D1PathGeometry> geo;
-    if (SUCCEEDED(res.factory->CreatePathGeometry(&geo))) {
-        ComPtr<ID2D1GeometrySink> sink;
-        if (SUCCEEDED(geo->Open(&sink))) {
-            sink->BeginFigure(D2D1::Point2F(hx - tx * len * 0.5f, hy - ty * len * 0.5f),
-                              D2D1_FIGURE_BEGIN_HOLLOW);
-            sink->AddLine(D2D1::Point2F(hx + tx * len * 0.5f, hy + ty * len * 0.5f));
-            sink->EndFigure(D2D1_FIGURE_END_OPEN);
-            sink->Close();
-        }
+
+    // main fill: dim tips -> saturated center, along the band
+    {
         D2D1_COLOR_F dim = col, bright = col;
-        dim.r *= 0.50f; dim.g *= 0.50f; dim.b *= 0.50f;
-        bright.r += (1.0f - bright.r) * 0.25f;
-        bright.g += (1.0f - bright.g) * 0.25f;
-        bright.b += (1.0f - bright.b) * 0.25f;
-        D2D1_GRADIENT_STOP stops[2];
+        dim.r *= 0.45f; dim.g *= 0.45f; dim.b *= 0.45f;
+        bright.r += (1.0f - bright.r) * 0.30f;
+        bright.g += (1.0f - bright.g) * 0.30f;
+        bright.b += (1.0f - bright.b) * 0.30f;
+        D2D1_GRADIENT_STOP stops[3];
         stops[0].position = 0.0f; stops[0].color = dim;
-        stops[1].position = 1.0f; stops[1].color = bright;
+        stops[1].position = 0.5f; stops[1].color = bright;
+        stops[2].position = 1.0f; stops[2].color = dim;
         ComPtr<ID2D1GradientStopCollection> gsc;
-        rt->CreateGradientStopCollection(stops, 2, &gsc);
+        rt->CreateGradientStopCollection(stops, 3, &gsc);
         ComPtr<ID2D1LinearGradientBrush> grad;
         if (gsc)
             rt->CreateLinearGradientBrush(
                 D2D1::LinearGradientBrushProperties(
-                    D2D1::Point2F(hx - tx * len * 0.5f, hy - ty * len * 0.5f),
-                    D2D1::Point2F(hx + tx * len * 0.5f, hy + ty * len * 0.5f)),
+                    D2D1::Point2F(hx - tx * halfLen, hy - ty * halfLen),
+                    D2D1::Point2F(hx + tx * halfLen, hy + ty * halfLen)),
                 gsc.Get(), &grad);
         if (grad)
-            rt->DrawGeometry(geo.Get(), grad.Get(), thick, res.roundCaps.Get());
+            rt->FillGeometry(ribbon.Get(), grad.Get());
         else {
             res.brush->SetColor(col);
-            rt->DrawGeometry(geo.Get(), res.brush.Get(), thick, res.roundCaps.Get());
+            rt->FillGeometry(ribbon.Get(), res.brush.Get());
         }
     }
 
-    // hot core: bright center line inside the capsule
-    {
-        ComPtr<ID2D1PathGeometry> core;
-        if (SUCCEEDED(res.factory->CreatePathGeometry(&core))) {
-            ComPtr<ID2D1GeometrySink> sink;
-            if (SUCCEEDED(core->Open(&sink))) {
-                sink->BeginFigure(D2D1::Point2F(hx - tx * len * 0.42f, hy - ty * len * 0.42f),
-                                  D2D1_FIGURE_BEGIN_HOLLOW);
-                sink->AddLine(D2D1::Point2F(hx + tx * len * 0.42f, hy + ty * len * 0.42f));
-                sink->EndFigure(D2D1_FIGURE_END_OPEN);
-                sink->Close();
-            }
-            res.brush->SetColor(D2D1::ColorF(1, 1, 1, 0.20f + 0.30f * lvl));
-            rt->DrawGeometry(core.Get(), res.brush.Get(), thick * 0.32f, res.roundCaps.Get());
-        }
+    // hot core: thinner brighter ribbon inside
+    ComPtr<ID2D1PathGeometry> core;
+    buildRibbon(0.38f, 0.5f, &core);
+    if (core) {
+        res.brush->SetColor(D2D1::ColorF(1, 1, 1, 0.16f + 0.30f * lvl));
+        rt->FillGeometry(core.Get(), res.brush.Get());
     }
 
-    // animated shimmer: bright spot sweeping along the capsule (~1.2 s period)
+    // travelling shimmer spot along the band (~1.2 s period)
     if (fx > 0.0f) {
-        float phase = std::fmod(timeSec / 1.2f, 1.0f) * 2.0f - 1.0f; // -1..1
-        float sx = hx + tx * phase * len * 0.5f;
-        float sy = hy + ty * phase * len * 0.5f;
-        res.brush->SetColor(D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.55f * fx));
+        float sp = std::fmod(timeSec / 1.2f, 1.0f) * 2.0f - 1.0f; // -1..1
+        float u = (sp + 1.0f) * 0.5f;
+        float env = std::sin(u * kPi);
+        float wave = waveAmp * std::sin(phase + sp * 5.0f) * env;
+        float sx = hx + tx * sp * halfLen + inx * (halfTh + wave);
+        float sy = hy + ty * sp * halfLen + iny * (halfTh + wave);
+        res.brush->SetColor(D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.50f * fx));
         ComPtr<ID2D1PathGeometry> spot;
         if (SUCCEEDED(res.factory->CreatePathGeometry(&spot))) {
             ComPtr<ID2D1GeometrySink> sink;
             if (SUCCEEDED(spot->Open(&sink))) {
-                sink->BeginFigure(D2D1::Point2F(sx - tx * 9.0f, sy - ty * 9.0f),
+                sink->BeginFigure(D2D1::Point2F(sx - tx * 10.0f, sy - ty * 10.0f),
                                   D2D1_FIGURE_BEGIN_HOLLOW);
-                sink->AddLine(D2D1::Point2F(sx + tx * 9.0f, sy + ty * 9.0f));
+                sink->AddLine(D2D1::Point2F(sx + tx * 10.0f, sy + ty * 10.0f));
                 sink->EndFigure(D2D1_FIGURE_END_OPEN);
                 sink->Close();
             }
-            rt->DrawGeometry(spot.Get(), res.brush.Get(), thick * 0.6f,
+            rt->DrawGeometry(spot.Get(), res.brush.Get(), halfTh * 1.1f,
                              res.roundCaps.Get());
         }
     }
@@ -576,7 +606,7 @@ void DrawScene(ID2D1RenderTarget* rt, const SceneResources& res, const OverlayCo
     // edge capsules: one sliding border segment per tracked cluster
     for (const auto& a : arrows) {
         if (a.strength <= 0.02f) continue;
-        DrawCapsule(rt, res, cfg, a.angle, a.strength, w, h, fx, timeSec);
+        DrawCapsule(rt, res, cfg, a.angle, a.strength, a.pulse, w, h, fx, timeSec);
     }
 }
 

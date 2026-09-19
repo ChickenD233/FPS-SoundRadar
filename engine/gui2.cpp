@@ -453,6 +453,8 @@ void Gui::PushState() {
     addNum("pos_y_pct", cfg.overlay.offsetY * 100.0 / sh);
     addNum("overlay_fx", cfg.overlay.fxPct);
     addNum("sensitivity", cfg.overlay.sensitivity);
+    addNum("edge_width", cfg.overlay.edgeWidthPct);
+    addNum("edge_len", cfg.overlay.edgeLenPct);
     j += ",\"overlay_enabled\":"; j += cfg.overlay.enabled ? "true" : "false";
     j += ",\"classify_enabled\":"; j += cfg.classifyEnabled ? "true" : "false";
     j += ",\"autostart\":"; j += AutostartIsEnabled() ? "true" : "false";
@@ -587,6 +589,8 @@ void Gui::ApplyFromJson(const std::string& cj, int selIn, int selOut) {
         cfg.overlay.offsetY = static_cast<int>(d) * sh / 100;
     if (JNum(cj, "overlay_fx", d)) cfg.overlay.fxPct = static_cast<int>(d);
     if (JNum(cj, "sensitivity", d)) cfg.overlay.sensitivity = static_cast<float>(d);
+    if (JNum(cj, "edge_width", d)) cfg.overlay.edgeWidthPct = static_cast<int>(d);
+    if (JNum(cj, "edge_len", d)) cfg.overlay.edgeLenPct = static_cast<int>(d);
     JFloatArray(cj, "weights", cfg.downmix.weights, 8);
 
     bool wantAuto = AutostartIsEnabled();

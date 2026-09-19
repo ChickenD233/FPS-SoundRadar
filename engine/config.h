@@ -19,6 +19,8 @@ struct OverlayConfig {
     int radius = 90;          // radar ring radius, px
     int fxPct = 85;           // effects intensity 0-100 (glow/pulse; 0 = flat minimal)
     float sensitivity = 2.0f; // display gain 0.5-4.0, applied after sqrt mapping
+    int edgeWidthPct = 100;   // edge-band thickness multiplier, percent (50-250)
+    int edgeLenPct = 100;     // edge-band length multiplier, percent (50-250)
 };
 
 struct AppConfig {

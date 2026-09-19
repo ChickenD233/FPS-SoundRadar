@@ -143,6 +143,8 @@ bool LoadConfig(const std::wstring& path, AppConfig& cfg) {
     if (GetNumber(json, "radar_radius", d)) cfg.overlay.radius = static_cast<int>(d);
     if (GetNumber(json, "overlay_fx", d)) cfg.overlay.fxPct = static_cast<int>(d);
     if (GetNumber(json, "sensitivity", d)) cfg.overlay.sensitivity = static_cast<float>(d);
+    if (GetNumber(json, "edge_width", d)) cfg.overlay.edgeWidthPct = static_cast<int>(d);
+    if (GetNumber(json, "edge_len", d)) cfg.overlay.edgeLenPct = static_cast<int>(d);
     GetBool(json, "classify_enabled", cfg.classifyEnabled);
     GetBool(json, "render_exclusive", cfg.renderExclusive);
     return true;
@@ -181,6 +183,8 @@ bool SaveConfig(const std::wstring& path, const AppConfig& cfg) {
     f << "  \"radar_radius\": " << cfg.overlay.radius << ",\n";
     f << "  \"overlay_fx\": " << cfg.overlay.fxPct << ",\n";
     f << "  \"sensitivity\": " << cfg.overlay.sensitivity << ",\n";
+    f << "  \"edge_width\": " << cfg.overlay.edgeWidthPct << ",\n";
+    f << "  \"edge_len\": " << cfg.overlay.edgeLenPct << ",\n";
     f << "  \"classify_enabled\": " << (cfg.classifyEnabled ? "true" : "false") << ",\n";
     f << "  \"render_exclusive\": " << (cfg.renderExclusive ? "true" : "false") << ",\n";
     f << "  \"autostart\": " << (cfg.autostart ? "true" : "false") << "\n";
