@@ -11,3 +11,4 @@ driver/sysvad/**/Debug/
 *.zip
 tools/wdk-nuget/
 overlaytest.log
+overlaytest*.log
