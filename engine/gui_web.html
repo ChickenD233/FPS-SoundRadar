@@ -211,6 +211,7 @@ footer {
   <div class="row"><label>位置X</label><input type="range" id="posX" min="-50" max="50" step="1"><span class="val" id="posXV"></span></div>
   <div class="row"><label>位置Y</label><input type="range" id="posY" min="0" max="50" step="1"><span class="val" id="posYV"></span></div>
   <div class="row"><label>特效强度</label><input type="range" id="fx" min="0" max="100" step="1"><span class="val" id="fxV"></span></div>
+  <div class="row"><label>灵敏度 Sens.</label><input type="range" id="sens" min="50" max="400" step="10"><span class="val" id="sensV"></span></div>
 </div>
 
 <div class="card">
@@ -279,6 +280,7 @@ bindSlider('high', v => (v/100).toFixed(2));
 bindSlider('posX', v => (v>0?'+':'') + v + '%');
 bindSlider('posY', v => v + '%');
 bindSlider('fx', v => v + '%');
+bindSlider('sens', v => (v/100).toFixed(2) + 'x');
 for (let i = 0; i < 8; i++) bindSlider('w' + i, v => (v/100).toFixed(2));
 
 function setMode(m) { /* mode UI removed: always stereo */ }
@@ -305,6 +307,7 @@ function applyState(s) {
   set('fade', c.fade_ms); set('radius', c.radar_radius);
   set('low', Math.round(c.overlay_low*100)); set('high', Math.round(c.overlay_high*100));
   set('posX', c.pos_x_pct); set('posY', c.pos_y_pct); set('fx', c.overlay_fx);
+  if (c.sensitivity !== undefined) set('sens', Math.round(c.sensitivity*100));
   for (let i = 0; i < 8; i++) set('w' + i, Math.round(c.weights[i]*100));
   const dot = $('dot');
   dot.className = 'dot ' + (s.status.running ? 'ok' : (s.status.error ? 'err' : 'warn'));
@@ -331,10 +334,23 @@ function collectConfig() {
     pos_x_pct: +$('posX').value,
     pos_y_pct: +$('posY').value,
     overlay_fx: +$('fx').value,
+    sensitivity: (+$('sens').value)/100,
     weights: [0,1,2,3,4,5,6,7].map(i => (+$('w'+i).value)/100)
   };
 }
 const post = o => window.chrome.webview.postMessage(o);
+// sliders/toggles apply instantly (debounced 200 ms after the last input)
+let applyTimer = null;
+function autoApply() {
+  clearTimeout(applyTimer);
+  applyTimer = setTimeout(() => post({cmd:'apply', selIn: $('selIn').selectedIndex,
+                                      selOut: $('selOut').selectedIndex,
+                                      config: collectConfig()}), 200);
+}
+$('content').addEventListener('input', e => {
+  if (e.target.type === 'range' || e.target.type === 'checkbox') autoApply();
+});
+$('content').addEventListener('change', e => { if (e.target.tagName === 'SELECT') autoApply(); });
 $('btnApply').onclick = () => post({cmd:'apply', selIn: $('selIn').selectedIndex,
                                     selOut: $('selOut').selectedIndex, config: collectConfig()});
 $('btnMin').onclick = () => post({cmd:'minimize'});

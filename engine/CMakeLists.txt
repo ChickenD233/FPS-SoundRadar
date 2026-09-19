@@ -3,16 +3,18 @@
 
 find_program(PYTHON_EXE python REQUIRED)
 
-# embed the HTML UI into a C++ header at configure time
-execute_process(
+# embed the HTML UI into a C++ header, regenerated whenever gui_web.html changes
+add_custom_command(
+    OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/gui_web_html.h
     COMMAND ${PYTHON_EXE} ${CMAKE_CURRENT_SOURCE_DIR}/embed_html.py
             ${CMAKE_CURRENT_SOURCE_DIR}/gui_web.html
             ${CMAKE_CURRENT_BINARY_DIR}/gui_web_html.h
-    RESULT_VARIABLE embed_rc
+    DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/gui_web.html
+            ${CMAKE_CURRENT_SOURCE_DIR}/embed_html.py
+    COMMENT "embedding gui_web.html"
 )
-if(NOT embed_rc EQUAL 0)
-    message(FATAL_ERROR "embed_html.py failed: ${embed_rc}")
-endif()
+add_custom_target(embed_html ALL
+    DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/gui_web_html.h)
 
 set(WEBVIEW2_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../tools/webview2/build/native)
 
@@ -34,7 +36,9 @@ add_executable(SoundRadar
     gui2.cpp
     log.cpp
     ../overlay/overlay.cpp
+    ${CMAKE_CURRENT_BINARY_DIR}/gui_web_html.h
 )
+add_dependencies(SoundRadar embed_html)
 
 target_compile_features(SoundRadar PRIVATE cxx_std_17)
 set_target_properties(SoundRadar PROPERTIES CXX_EXTENSIONS OFF)

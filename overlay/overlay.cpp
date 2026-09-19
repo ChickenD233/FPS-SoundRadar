@@ -269,11 +269,11 @@ ComPtr<ID2D1PathGeometry> MakeNeedle(ID2D1Factory* factory, float cx, float cy, 
     if (FAILED(factory->CreatePathGeometry(&geo))) return nullptr;
     ComPtr<ID2D1GeometrySink> sink;
     if (FAILED(geo->Open(&sink))) return nullptr;
-    sink->BeginFigure(D2D1::Point2F(cx - 3.0f, cy - 1.0f), D2D1_FIGURE_BEGIN_FILLED);
-    sink->AddLine(D2D1::Point2F(cx + 3.0f, cy - 1.0f));
-    sink->AddLine(D2D1::Point2F(cx + 4.5f, cy - mid));
+    sink->BeginFigure(D2D1::Point2F(cx - 3.5f, cy - 1.0f), D2D1_FIGURE_BEGIN_FILLED);
+    sink->AddLine(D2D1::Point2F(cx + 3.5f, cy - 1.0f));
+    sink->AddLine(D2D1::Point2F(cx + 5.5f, cy - mid));
     sink->AddLine(D2D1::Point2F(cx, cy - tip));
-    sink->AddLine(D2D1::Point2F(cx - 4.5f, cy - mid));
+    sink->AddLine(D2D1::Point2F(cx - 5.5f, cy - mid));
     sink->EndFigure(D2D1_FIGURE_END_CLOSED);
     sink->Close();
     return geo;
@@ -360,7 +360,7 @@ HRESULT CreateSceneResources(ID2D1Factory* d2dFactory, IDWriteFactory* dwFactory
 // tangent to the border. Slides along the edge as the angle moves.
 void DrawCapsule(ID2D1RenderTarget* rt, const SceneResources& res,
                  const OverlayConfig& cfg, float angleDeg, float lvl, int w, int h,
-                 float fx) {
+                 float fx, float timeSec) {
     float cx = w * 0.5f + static_cast<float>(cfg.offsetX);
     float cy = h * 0.5f + static_cast<float>(cfg.offsetY);
     float rad = angleDeg * kPi / 180.0f;
@@ -380,25 +380,27 @@ void DrawCapsule(ID2D1RenderTarget* rt, const SceneResources& res,
     bool horiz = (edge == 0 || edge == 2);
     float tx = horiz ? 1.0f : 0.0f, ty = horiz ? 0.0f : 1.0f; // tangent along border
 
-    float len = 120.0f * (0.35f + 0.65f * lvl); // ~120 px scaled by level
-    float thick = 6.0f;
+    float len = 40.0f + 120.0f * lvl; // up to 160 px at max level
+    float thick = 8.0f;
     D2D1_COLOR_F col = NeonColor(lvl, cfg);
 
-    auto seg = [&](float halfLen, float t, float alphaMul) {
+    auto seg = [&](float cx2, float cy2, float halfLen, float t, float alphaMul) {
         ComPtr<ID2D1PathGeometry> geo;
         if (FAILED(res.factory->CreatePathGeometry(&geo))) return;
         ComPtr<ID2D1GeometrySink> sink;
         if (FAILED(geo->Open(&sink))) return;
-        sink->BeginFigure(D2D1::Point2F(hx - tx * halfLen, hy - ty * halfLen),
+        sink->BeginFigure(D2D1::Point2F(cx2 - tx * halfLen, cy2 - ty * halfLen),
                           D2D1_FIGURE_BEGIN_HOLLOW);
-        sink->AddLine(D2D1::Point2F(hx + tx * halfLen, hy + ty * halfLen));
+        sink->AddLine(D2D1::Point2F(cx2 + tx * halfLen, cy2 + ty * halfLen));
         sink->EndFigure(D2D1_FIGURE_END_OPEN);
         sink->Close();
         res.brush->SetColor(NeonColor(lvl, cfg, alphaMul));
         rt->DrawGeometry(geo.Get(), res.brush.Get(), t, res.roundCaps.Get());
     };
 
-    if (fx > 0.0f) seg(len * 0.5f, thick + 10.0f * fx, 0.22f * fx); // glow
+    if (fx > 0.0f) seg(hx, hy, len * 0.5f, thick + 10.0f * fx, 0.22f * fx); // glow
+    // outline pass: slightly wider, saturated edge
+    seg(hx, hy, len * 0.5f, thick + 2.5f, 0.55f);
     // main capsule: gradient dim->bright along its length
     ComPtr<ID2D1PathGeometry> geo;
     if (SUCCEEDED(res.factory->CreatePathGeometry(&geo))) {
@@ -434,6 +436,27 @@ void DrawCapsule(ID2D1RenderTarget* rt, const SceneResources& res,
             rt->DrawGeometry(geo.Get(), res.brush.Get(), thick, res.roundCaps.Get());
         }
     }
+
+    // animated shimmer: bright spot sweeping along the capsule (~1.2 s period)
+    if (fx > 0.0f) {
+        float phase = std::fmod(timeSec / 1.2f, 1.0f) * 2.0f - 1.0f; // -1..1
+        float sx = hx + tx * phase * len * 0.5f;
+        float sy = hy + ty * phase * len * 0.5f;
+        res.brush->SetColor(D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.55f * fx));
+        ComPtr<ID2D1PathGeometry> spot;
+        if (SUCCEEDED(res.factory->CreatePathGeometry(&spot))) {
+            ComPtr<ID2D1GeometrySink> sink;
+            if (SUCCEEDED(spot->Open(&sink))) {
+                sink->BeginFigure(D2D1::Point2F(sx - tx * 9.0f, sy - ty * 9.0f),
+                                  D2D1_FIGURE_BEGIN_HOLLOW);
+                sink->AddLine(D2D1::Point2F(sx + tx * 9.0f, sy + ty * 9.0f));
+                sink->EndFigure(D2D1_FIGURE_END_OPEN);
+                sink->Close();
+            }
+            rt->DrawGeometry(spot.Get(), res.brush.Get(), thick * 0.6f,
+                             res.roundCaps.Get());
+        }
+    }
 }
 
 // Neon sonar scene: floating luminous arc segments around an invisible
@@ -441,7 +464,7 @@ void DrawCapsule(ID2D1RenderTarget* rt, const SceneResources& res,
 // ripple, and crisp vector type icons (footstep pair / gunshot spark).
 void DrawScene(ID2D1RenderTarget* rt, const SceneResources& res, const OverlayConfig& cfg,
                const float levels[8], const std::vector<ArrowTracker::Arrow>& arrows,
-               float needleAngle, float needleStrength,
+               float needleAngle, float needleStrength, bool stereoSnap, float timeSec,
                const uint8_t* classes, bool classifyOn, int w, int h) {
     float cx = w * 0.5f + static_cast<float>(cfg.offsetX);
     float cy = h * 0.5f + static_cast<float>(cfg.offsetY);
@@ -449,10 +472,22 @@ void DrawScene(ID2D1RenderTarget* rt, const SceneResources& res, const OverlayCo
     float fx = cfg.fxPct / 100.0f;
     (void)levels; // everything direction-related reads the tracked clusters now
 
+    // two-tier display: outer arc snaps to the zone, needle stays continuous
+    auto snapAngle = [&](float ang) {
+        if (stereoSnap) return std::round(ang / 15.0f) * 15.0f;
+        float best = kAngleDeg[0], bd = 1e9f;
+        for (int c = 0; c < 8; ++c) {
+            if (c == 3) continue;
+            float d = std::fabs(AngDist(ang, kAngleDeg[c]));
+            if (d < bd) { bd = d; best = kAngleDeg[c]; }
+        }
+        return best;
+    };
+
     // compass needle UNDER the arcs: slim, ~55% alpha, glow scaled by FX
     if (needleStrength > 0.02f && res.needle) {
         D2D1_COLOR_F col = NeonColor(needleStrength, cfg);
-        col.a = 0.60f * (0.4f + 0.6f * needleStrength);
+        col.a = 0.70f * (0.4f + 0.6f * needleStrength);
         rt->SetTransform(D2D1::Matrix3x2F::Rotation(needleAngle, D2D1::Point2F(cx, cy)));
         if (fx > 0.0f) { // glow: wider dimmer copy behind
             res.brush->SetColor(NeonColor(needleStrength, cfg, col.a * 0.35f * fx));
@@ -464,107 +499,23 @@ void DrawScene(ID2D1RenderTarget* rt, const SceneResources& res, const OverlayCo
         res.brush->SetColor(col);
         rt->FillGeometry(res.needle.Get(), res.brush.Get());
         rt->SetTransform(D2D1::Matrix3x2F::Identity());
-    }
 
-    for (const auto& a : arrows) {
-        if (a.strength <= 0.02f) continue;
-        float lvl = a.strength;
-        // scale-in pop over ~150 ms after spawn
-        float pop = (a.age < 0.15f) ? 0.6f + 0.4f * (a.age / 0.15f) : 1.0f;
-        float span = (34.0f + 26.0f * lvl) * pop;      // 34..60 deg
-        float thick = (10.0f + 9.0f * lvl) * pop;      // ~10px base, grows
-        D2D1_COLOR_F col = NeonColor(lvl, cfg);
-
-        auto drawArc = [&](float deg, float spanD, float t, float alphaMul) {
-            ComPtr<ID2D1PathGeometry> geo = MakeArc(res.factory.Get(), cx, cy, r, spanD);
-            if (!geo) return;
-            rt->SetTransform(D2D1::Matrix3x2F::Rotation(deg, D2D1::Point2F(cx, cy)));
-            res.brush->SetColor(NeonColor(lvl, cfg, alphaMul));
-            rt->DrawGeometry(geo.Get(), res.brush.Get(), t, res.roundCaps.Get());
-            rt->SetTransform(D2D1::Matrix3x2F::Identity());
-        };
-
-        // motion trail: two fading arcs at recent older angles
-        if (fx > 0.0f) {
-            const float trails[2] = { a.trail1, a.trail0 };
-            const float trailA[2] = { 0.10f, 0.20f };
-            for (int ti = 0; ti < 2; ++ti) {
-                if (trails[ti] == a.angle) continue;
-                drawArc(trails[ti], span * 0.85f, thick * 0.75f, trailA[ti] * fx);
-            }
-        }
-        // soft outer glow (two passes)
-        if (fx > 0.0f) {
-            drawArc(a.angle, span, thick + 10.0f * fx, 0.16f * fx);
-            drawArc(a.angle, span, thick + 5.0f * fx, 0.34f * fx);
-        }
-        // main arc: gradient fill (dimmer tail -> bright head, along the arc)
-        {
-            ComPtr<ID2D1PathGeometry> geo = MakeArc(res.factory.Get(), cx, cy, r, span);
-            if (geo) {
-                float halfLen = r * span * kPi / 360.0f; // half arc length
-                D2D1_GRADIENT_STOP stops[2];
-                D2D1_COLOR_F dim = col, bright = col;
-                dim.r *= 0.50f; dim.g *= 0.50f; dim.b *= 0.50f;
-                // head shifts toward deeper saturation, NOT toward white
-                // (whitening disappears on bright backgrounds)
-                auto clampf = [](float v) { return v > 1.0f ? 1.0f : v; };
-                bright.r = clampf(bright.r * 1.25f);
-                bright.g = clampf(bright.g * 1.25f);
-                bright.b = clampf(bright.b * 1.25f);
-                stops[0].position = 0.0f; stops[0].color = dim;
-                stops[1].position = 1.0f; stops[1].color = bright;
-                ComPtr<ID2D1GradientStopCollection> gsc;
-                rt->CreateGradientStopCollection(stops, 2, &gsc);
-                ComPtr<ID2D1LinearGradientBrush> grad;
-                if (gsc)
-                    rt->CreateLinearGradientBrush(
-                        D2D1::LinearGradientBrushProperties(
-                            D2D1::Point2F(cx - halfLen, cy - r),
-                            D2D1::Point2F(cx + halfLen, cy - r)),
-                        gsc.Get(), &grad);
-                rt->SetTransform(D2D1::Matrix3x2F::Rotation(a.angle, D2D1::Point2F(cx, cy)));
-                if (grad)
-                    rt->DrawGeometry(geo.Get(), grad.Get(), thick, res.roundCaps.Get());
-                else
-                    rt->DrawGeometry(geo.Get(), res.brush.Get(), thick, res.roundCaps.Get());
-                // 1px inner highlight line
-                ComPtr<ID2D1PathGeometry> hi =
-                    MakeArc(res.factory.Get(), cx, cy, r - thick * 0.5f + 0.5f, span * 0.92f);
-                if (hi) {
-                    res.brush->SetColor(D2D1::ColorF(1, 1, 1, 0.35f));
-                    rt->DrawGeometry(hi.Get(), res.brush.Get(), 1.0f, res.roundCaps.Get());
-                }
-                rt->SetTransform(D2D1::Matrix3x2F::Identity());
-            }
-        }
-
-        // onset ripple flash at the arc position
-        if (a.pulse > 0.0f && fx > 0.0f) {
-            float rad = a.angle * kPi / 180.0f;
-            D2D1_POINT_2F at = D2D1::Point2F(cx + r * std::sin(rad),
-                                             cy - r * std::cos(rad));
-            float rr = 4.0f + 14.0f * a.pulse;
-            res.brush->SetColor(NeonColor(lvl, cfg, (1.0f - a.pulse) * 0.5f * fx));
-            rt->DrawEllipse(D2D1::Ellipse(at, rr, rr), res.brush.Get(), 1.5f);
-        }
-
-        // type icon just inside the arc, only when classification fires
+        // type icons ride the needle tip (only when classification fires)
         if (classifyOn && classes) {
             int bestCh = -1;
             float bestD = 1e9f;
             for (int c = 0; c < 8; ++c) {
-                if (c == 3) continue; // LFE has no angle
-                float d = std::fabs(AngDist(a.angle, kAngleDeg[c]));
+                if (c == 3) continue;
+                float d = std::fabs(AngDist(needleAngle, kAngleDeg[c]));
                 if (d < bestD) { bestD = d; bestCh = c; }
             }
             uint8_t cls = bestCh >= 0 ? classes[bestCh] : SoundNone;
             if (cls != SoundNone) {
                 D2D1_MATRIX_3X2_F xform =
-                    D2D1::Matrix3x2F::Rotation(a.angle, D2D1::Point2F(cx, cy));
+                    D2D1::Matrix3x2F::Rotation(needleAngle, D2D1::Point2F(cx, cy));
                 rt->SetTransform(xform);
-                float alpha = 0.9f * pop;
-                float iy = cy - r + 24.0f; // icon center (inside the arc)
+                float alpha = 0.9f;
+                float iy = cy - r * 0.85f - 4.0f; // just past the needle tip
                 if (cls == SoundFootstep) {
                     // footprint pair: sole + heel ellipses, mirrored offset;
                     // dark underlay pass keeps them readable on bright scenes
@@ -595,6 +546,94 @@ void DrawScene(ID2D1RenderTarget* rt, const SceneResources& res, const OverlayCo
         }
     }
 
+    for (const auto& a : arrows) {
+        if (a.strength <= 0.02f) continue;
+        float lvl = a.strength;
+        // scale-in pop over ~150 ms after spawn
+        float pop = (a.age < 0.15f) ? 0.6f + 0.4f * (a.age / 0.15f) : 1.0f;
+        float span = (34.0f + 26.0f * lvl) * pop;      // 34..60 deg
+        float thick = (10.0f + 9.0f * lvl) * pop;      // ~10px base, grows
+        D2D1_COLOR_F col = NeonColor(lvl, cfg);
+
+        auto drawArc = [&](float deg, float spanD, float t, float alphaMul) {
+            ComPtr<ID2D1PathGeometry> geo = MakeArc(res.factory.Get(), cx, cy, r, spanD);
+            if (!geo) return;
+            rt->SetTransform(D2D1::Matrix3x2F::Rotation(deg, D2D1::Point2F(cx, cy)));
+            res.brush->SetColor(NeonColor(lvl, cfg, alphaMul));
+            rt->DrawGeometry(geo.Get(), res.brush.Get(), t, res.roundCaps.Get());
+            rt->SetTransform(D2D1::Matrix3x2F::Identity());
+        };
+
+        // outer arc rides the snapped zone angle; needle keeps the precise one
+        float arcAng = snapAngle(a.angle);
+
+        // motion trail: two fading arcs at recent older angles
+        if (fx > 0.0f) {
+            const float trails[2] = { a.trail1, a.trail0 };
+            const float trailA[2] = { 0.10f, 0.20f };
+            for (int ti = 0; ti < 2; ++ti) {
+                if (trails[ti] == a.angle) continue;
+                drawArc(snapAngle(trails[ti]), span * 0.85f, thick * 0.75f,
+                        trailA[ti] * fx);
+            }
+        }
+        // soft outer glow (two passes)
+        if (fx > 0.0f) {
+            drawArc(arcAng, span, thick + 10.0f * fx, 0.16f * fx);
+            drawArc(arcAng, span, thick + 5.0f * fx, 0.34f * fx);
+        }
+        // main arc: gradient fill (dimmer tail -> bright head, along the arc)
+        {
+            ComPtr<ID2D1PathGeometry> geo = MakeArc(res.factory.Get(), cx, cy, r, span);
+            if (geo) {
+                float halfLen = r * span * kPi / 360.0f; // half arc length
+                D2D1_GRADIENT_STOP stops[2];
+                D2D1_COLOR_F dim = col, bright = col;
+                dim.r *= 0.50f; dim.g *= 0.50f; dim.b *= 0.50f;
+                // head shifts toward deeper saturation, NOT toward white
+                // (whitening disappears on bright backgrounds)
+                auto clampf = [](float v) { return v > 1.0f ? 1.0f : v; };
+                bright.r = clampf(bright.r * 1.25f);
+                bright.g = clampf(bright.g * 1.25f);
+                bright.b = clampf(bright.b * 1.25f);
+                stops[0].position = 0.0f; stops[0].color = dim;
+                stops[1].position = 1.0f; stops[1].color = bright;
+                ComPtr<ID2D1GradientStopCollection> gsc;
+                rt->CreateGradientStopCollection(stops, 2, &gsc);
+                ComPtr<ID2D1LinearGradientBrush> grad;
+                if (gsc)
+                    rt->CreateLinearGradientBrush(
+                        D2D1::LinearGradientBrushProperties(
+                            D2D1::Point2F(cx - halfLen, cy - r),
+                            D2D1::Point2F(cx + halfLen, cy - r)),
+                        gsc.Get(), &grad);
+                rt->SetTransform(D2D1::Matrix3x2F::Rotation(arcAng, D2D1::Point2F(cx, cy)));
+                if (grad)
+                    rt->DrawGeometry(geo.Get(), grad.Get(), thick, res.roundCaps.Get());
+                else
+                    rt->DrawGeometry(geo.Get(), res.brush.Get(), thick, res.roundCaps.Get());
+                // 1px inner highlight line
+                ComPtr<ID2D1PathGeometry> hi =
+                    MakeArc(res.factory.Get(), cx, cy, r - thick * 0.5f + 0.5f, span * 0.92f);
+                if (hi) {
+                    res.brush->SetColor(D2D1::ColorF(1, 1, 1, 0.35f));
+                    rt->DrawGeometry(hi.Get(), res.brush.Get(), 1.0f, res.roundCaps.Get());
+                }
+                rt->SetTransform(D2D1::Matrix3x2F::Identity());
+            }
+        }
+
+        // onset ripple flash at the arc position
+        if (a.pulse > 0.0f && fx > 0.0f) {
+            float rad = arcAng * kPi / 180.0f;
+            D2D1_POINT_2F at = D2D1::Point2F(cx + r * std::sin(rad),
+                                             cy - r * std::cos(rad));
+            float rr = 4.0f + 14.0f * a.pulse;
+            res.brush->SetColor(NeonColor(lvl, cfg, (1.0f - a.pulse) * 0.5f * fx));
+            rt->DrawEllipse(D2D1::Ellipse(at, rr, rr), res.brush.Get(), 1.5f);
+        }
+    }
+
     // corner disclaimer while classification display is on (tiny, dim)
     if (classifyOn) {
         res.textBrush->SetColor(D2D1::ColorF(1, 1, 1, 0.35f));
@@ -605,7 +644,7 @@ void DrawScene(ID2D1RenderTarget* rt, const SceneResources& res, const OverlayCo
     // edge capsules: one sliding border segment per tracked cluster
     for (const auto& a : arrows) {
         if (a.strength <= 0.02f) continue;
-        DrawCapsule(rt, res, cfg, a.angle, a.strength, w, h, fx);
+        DrawCapsule(rt, res, cfg, a.angle, a.strength, w, h, fx, timeSec);
     }
 }
 
@@ -816,6 +855,7 @@ void Overlay::ThreadMain(bool visible) {
     float modeTimer_ = 0.0f;
     bool needleUp_ = false;    // compass needle state
     float needleAngle_ = 0.0f, needleStrength_ = 0.0f;
+    float timeSec_ = 0.0f;     // shimmer clock (advances only while active)
 
     // --- render loop: ~60 fps while audio active, ~4 fps polling when idle --
     HANDLE waits[2] = { quitEvent_, stopEvent_ };
@@ -845,6 +885,14 @@ void Overlay::ThreadMain(bool visible) {
             std::memcpy(classes, meters_->classes, sizeof(classes));
             srcCh = meters_->srcChannels;
         }
+        // display gain (sensitivity slider) after the sqrt envelope mapping
+        float sens = cfg_.sensitivity;
+        if (sens < 0.5f) sens = 0.5f;
+        if (sens > 4.0f) sens = 4.0f;
+        for (int c = 0; c < 8; ++c) {
+            frame.level[c] *= sens;
+            if (frame.level[c] > 1.0f) frame.level[c] = 1.0f;
+        }
         float maxLvl = 0.0f;
         for (int c = 0; c < 8; ++c) if (frame.level[c] > maxLvl) maxLvl = frame.level[c];
         bool active = frame.active || maxLvl > 0.02f;
@@ -854,12 +902,14 @@ void Overlay::ThreadMain(bool visible) {
         float dt = static_cast<float>(nowTick - lastTick) / 1000.0f;
         lastTick = nowTick;
 
-        // stereo evidence: only FL/FR carry energy (VB-CABLE wraps stereo games
-        // in an 8ch container, so srcChannels alone is not enough)
-        bool stereoEvidence = frame.level[0] > 0.03f || frame.level[1] > 0.03f;
+        // stereo-pan ONLY when BOTH FL and FR carry energy and nothing else
+        // does. A single active channel must produce a fixed arc at its own
+        // angle (the cluster tracker does that) - never a pan jump to +-90.
+        bool frontPair = frame.level[0] > 0.03f && frame.level[1] > 0.03f;
+        bool othersQuiet = true;
         for (int c = 2; c < 8; ++c)
-            if (frame.level[c] > 0.03f) stereoEvidence = false;
-        bool wantStereo = (srcCh == 2) || stereoEvidence;
+            if (frame.level[c] > 0.03f) othersQuiet = false;
+        bool wantStereo = (srcCh == 2) || (frontPair && othersQuiet);
         if (wantStereo != stereoMode_) {
             // hysteresis: switch only after ~300 ms of consistent evidence
             modeTimer_ += dt;
@@ -880,6 +930,7 @@ void Overlay::ThreadMain(bool visible) {
             float zeros[8] = {};
             tracker.Update(zeros, 0.05f, dt); // lets arrows fade out
         }
+        if (active) timeSec_ += dt; // shimmer clock pauses when idle
 
         // compass needle: points at the loudest tracked cluster, drawn under arcs
         {
@@ -933,6 +984,7 @@ void Overlay::ThreadMain(bool visible) {
                 dc->Clear(D2D1::ColorF(0, 0, 0, 0)); // fully transparent base
                 DrawScene(dc.Get(), res, cfg_, frame.level, tracker.Arrows(),
                           needleUp_ ? needleAngle_ : 0.0f, needleStrength_,
+                          stereoMode_, timeSec_,
                           classes, g_classifyEnabled.load(), w, h);
                 fhr = dc->EndDraw();
                 dc->SetTarget(nullptr);
@@ -1022,7 +1074,8 @@ bool RenderSceneToFile(const std::wstring& path, int width, int height,
                 needleAngle = a.angle;
             }
         DrawScene(rt.Get(), res, cfg, levels, tracker.Arrows(), needleAngle,
-                  needleStrength, classes, classes != nullptr, width, height);
+                  needleStrength, /*stereoSnap=*/false, 0.35f, classes,
+                  classes != nullptr, width, height);
         hr = rt->EndDraw();
     }
     if (FAILED(hr)) return false;
