@@ -1,5 +1,5 @@
 // gui2.cpp - WebView2-hosted settings window. The HTML page is embedded in
-// the exe (gui_web_html.h, generated at configure time from gui_web.html).
+// the exe (gui_web_html.h, regenerated at build time from gui_web.html).
 // Bridge: window.chrome.webview.postMessage, JSON both ways.
 #include "gui2.h"
 
@@ -24,6 +24,7 @@
 #include "log.h"
 #include "meters.h"
 #include "tray.h" // AutostartIsEnabled/AutostartSet
+#include "version.h"
 #include "wasapi_util.h"
 
 #pragma comment(lib, "shlwapi")
@@ -295,7 +296,15 @@ void Gui::InitWebView() {
                                     return S_OK;
                                 }),
                             &tok);
-                        webview_->NavigateToString(kGuiHtml);
+                        static std::wstring html = [] {
+                            std::wstring s = kGuiHtml;
+                            const std::wstring token = L"@APP_VERSION@";
+                            size_t p = s.find(token);
+                            if (p != std::wstring::npos)
+                                s.replace(p, token.size(), SR_APP_VERSION);
+                            return s;
+                        }();
+                        webview_->NavigateToString(html.c_str());
                         webReady_ = true;
                         Log("gui2: webview ready");
                         return S_OK;
