@@ -26,6 +26,7 @@
 #include "log.h"
 #include "meters.h"
 #include "tray.h" // AutostartIsEnabled/AutostartSet
+#include "update.h" // UpdateCheckAsync/UpdateDownloadAndInstallAsync
 #include "version.h"
 #include "wasapi_util.h"
 
@@ -103,8 +104,8 @@ std::wstring AppDataDir() {
     return p.substr(0, p.find_last_of(L"\\/"));
 }
 
-std::string JEscape(const std::wstring& w) {
-    std::string s = ToUtf8(w);
+// JSON-escape a UTF-8 string (the whole JSON blob is later widened as UTF-8).
+std::string JEscape8(const std::string& s) {
     std::string out;
     for (char c : s) {
         if (c == '"' || c == '\\') { out += '\\'; out += c; }
@@ -112,6 +113,10 @@ std::string JEscape(const std::wstring& w) {
         else out += c;
     }
     return out;
+}
+
+std::string JEscape(const std::wstring& w) {
+    return JEscape8(ToUtf8(w));
 }
 
 // --- minimal JSON reader (flat keys; objects/arrays returned raw) -----------
@@ -302,8 +307,8 @@ void Gui::InitWebView() {
                         static std::wstring html = [] {
                             std::wstring s = kGuiHtml;
                             const std::wstring token = L"@APP_VERSION@";
-                            size_t p = s.find(token);
-                            if (p != std::wstring::npos)
+                            for (size_t p = s.find(token); p != std::wstring::npos;
+                                 p = s.find(token, p))
                                 s.replace(p, token.size(), SR_APP_VERSION);
                             return s;
                         }();
@@ -561,6 +566,24 @@ void Gui::OnBridgeMessage(const wchar_t* jsonW) {
     }
     if (cmd == "minimize") {
         Hide();
+        return;
+    }
+    if (cmd == "checkUpdate") {
+        // callback fires on a detached worker thread: marshal it back here
+        // with a posted message (the message handler owns the pointer)
+        HWND hwnd = hwnd_;
+        UpdateCheckAsync([hwnd](const UpdateStatus& st) {
+            PostMessageW(hwnd, kMsgUpdateStatus, 0,
+                         reinterpret_cast<LPARAM>(new UpdateStatus(st)));
+        });
+        return;
+    }
+    if (cmd == "doUpdate") {
+        HWND hwnd = hwnd_;
+        UpdateDownloadAndInstallAsync([hwnd](const UpdateStatus& st) {
+            PostMessageW(hwnd, kMsgUpdateStatus, 0,
+                         reinterpret_cast<LPARAM>(new UpdateStatus(st)));
+        });
         return;
     }
     if (cmd == "resetWeights") {
@@ -883,6 +906,28 @@ LRESULT Gui::HandleMessage(UINT msg, WPARAM wp, LPARAM lp) {
             const RECT* r = reinterpret_cast<const RECT*>(lp);
             SetWindowPos(hwnd_, nullptr, r->left, r->top, r->right - r->left,
                          r->bottom - r->top, SWP_NOZORDER | SWP_NOACTIVATE);
+            return 0;
+        }
+        case kMsgUpdateStatus: {
+            // UpdateStatus* posted from the updater worker thread; owned here
+            UpdateStatus* st = reinterpret_cast<UpdateStatus*>(lp);
+            if (webview_) {
+                char num[16];
+                std::snprintf(num, sizeof(num), "%d", st->state);
+                std::string j = "{\"type\":\"update\",\"state\":";
+                j += num;
+                j += ",\"latest\":\"";
+                j += JEscape8(st->latestVersion);
+                j += "\",\"message\":\"";
+                j += JEscape8(st->message);
+                j += "\"}";
+                std::wstring wj;
+                int n = MultiByteToWideChar(CP_UTF8, 0, j.c_str(), -1, nullptr, 0);
+                wj.resize(n - 1);
+                MultiByteToWideChar(CP_UTF8, 0, j.c_str(), -1, wj.data(), n);
+                webview_->PostWebMessageAsJson(wj.c_str());
+            }
+            delete st;
             return 0;
         }
         case WM_DESTROY:

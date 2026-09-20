@@ -11,6 +11,10 @@
 
 namespace sr {
 
+// config file schema version; bump when retuned defaults must overwrite the
+// values old builds persisted (see the migration at the end of LoadConfig).
+constexpr int kConfigVersion = 2;
+
 std::wstring DefaultConfigPath() {
     wchar_t buf[MAX_PATH] = {};
     DWORD n = GetEnvironmentVariableW(L"APPDATA", buf, MAX_PATH);
@@ -164,6 +168,19 @@ bool LoadConfig(const std::wstring& path, AppConfig& cfg) {
     if (GetNumber(json, "classify_impact_ratio", d)) cfg.classify.impactHighRatio = static_cast<float>(d);
     if (GetNumber(json, "classify_impact_crest", d)) cfg.classify.impactMinCrest = static_cast<float>(d);
     GetBool(json, "render_exclusive", cfg.renderExclusive);
+
+    // migration v2: retuned detection thresholds. Old defaults (low 0.15,
+    // high 0.5, activity 0.05, detect 0.03, burst 0.04) gated out quiet
+    // footsteps and rendered almost everything in the cyan/teal band.
+    // Sensitivity and all non-threshold settings are left untouched.
+    double ver = 0;
+    if (!GetNumber(json, "config_version", ver) || ver < 2) {
+        cfg.overlay.lowThreshold = 0.08f;
+        cfg.overlay.highThreshold = 0.30f;
+        cfg.overlay.detectThreshold = 0.02f;
+        cfg.analysis.activityThreshold = 0.02f;
+        cfg.classify.burstThreshold = 0.02f;
+    }
     return true;
 }
 
@@ -178,6 +195,7 @@ bool SaveConfig(const std::wstring& path, const AppConfig& cfg) {
 
     char num[64];
     f << "{\n";
+    f << "  \"config_version\": " << kConfigVersion << ",\n";
     f << "  \"mode\": \"" << (cfg.downmix.mode == DownmixStereo ? "stereo" : "right-mono") << "\",\n";
     f << "  \"weights\": [";
     for (int i = 0; i < kChannels; ++i) {

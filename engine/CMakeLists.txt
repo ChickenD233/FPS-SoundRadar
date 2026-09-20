@@ -35,6 +35,7 @@ add_executable(SoundRadar
     simulate.cpp
     gui2.cpp
     log.cpp
+    update.cpp
     ../overlay/overlay.cpp
     ${CMAKE_CURRENT_BINARY_DIR}/gui_web_html.h
 )
@@ -65,6 +66,7 @@ target_link_libraries(SoundRadar PRIVATE
     ole32
     avrt
     winmm
+    wininet
     comctl32
     shlwapi
     uxtheme

@@ -95,13 +95,14 @@ public:
     // frontMerge: fuse peaks closer than 60 deg into one dead-ahead arrow.
     // arrowFadeMs: unmatched arrows hold 150 ms, then fade out over ~arrowFadeMs.
     void Update(const float levels[8], float minLevel, float dt, bool frontMerge, int arrowFadeMs) {
-        // 1) candidate peaks: level >= both ring neighbors, above threshold
+        // 1) candidate peaks: level ~>= both ring neighbors (15% tolerance so a
+        //    diffuse quiet step spread over adjacent channels still spawns)
         bool cand[7];
         for (int i = 0; i < 7; ++i) {
             float l = levels[kRingCh[i]];
             float lp = levels[kRingCh[(i + 6) % 7]];
             float ln = levels[kRingCh[(i + 1) % 7]];
-            cand[i] = l > minLevel && l >= lp && l >= ln;
+            cand[i] = l > minLevel && l >= lp * 0.85f && l >= ln * 0.85f;
         }
         // 2) maximal circular runs of adjacent candidates -> one peak each,
         //    centroid = energy-weighted circular mean over run +/- 1 neighbor

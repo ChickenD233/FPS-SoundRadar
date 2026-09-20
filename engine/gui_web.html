@@ -218,6 +218,16 @@ footer {
   </div>
   <div class="row"><label>灵敏度 Sens.</label><input type="range" id="sens" min="50" max="400" step="10"><span class="val" id="sensV"></span></div>
 </div>
+
+<div class="card">
+  <h2>更新 UPDATE</h2>
+  <div class="row"><label>当前版本</label><span class="val" style="width:auto">v@APP_VERSION@</span>
+    <span id="updText" style="flex:1;color:var(--dim);font-size:11.5px;overflow:hidden;text-overflow:ellipsis"></span></div>
+  <div class="btns" style="margin-bottom:0">
+    <button class="act ghost" id="btnCheckUpdate">检查更新</button>
+    <button class="act primary" id="btnDoUpdate" hidden>立即更新</button>
+  </div>
+</div>
 </div>
 
 <div id="pageAdv" hidden>
@@ -380,8 +390,8 @@ function applyState(s) {
   if (c.sensitivity !== undefined) set('sens', Math.round(c.sensitivity*100));
   if (c.edge_width !== undefined) set('edgeW', c.edge_width);
   if (c.edge_len !== undefined) set('edgeL', c.edge_len);
-  set('dth', Math.round((c.detect_threshold !== undefined ? c.detect_threshold : 0.03)*200)/2);
-  set('cburst', Math.round((c.classify_burst !== undefined ? c.classify_burst : 0.04)*200)/2);
+  set('dth', Math.round((c.detect_threshold !== undefined ? c.detect_threshold : 0.02)*200)/2);
+  set('cburst', Math.round((c.classify_burst !== undefined ? c.classify_burst : 0.02)*200)/2);
   $('fmerge').checked = c.front_merge !== undefined ? !!c.front_merge : true;
   $('hideImp').checked = c.hide_impact !== undefined ? !!c.hide_impact : false;
   $('duckOn').checked = c.duck_enabled !== undefined ? !!c.duck_enabled : true;
@@ -455,11 +465,28 @@ $('btnSetDefault').onclick = () => post({cmd:'setDefault', selIn: $('selIn').sel
 $('btnExport').onclick = () => post({cmd:'exportConfig'});
 $('btnImport').onclick = () => post({cmd:'importConfig'});
 
+// self-update: states 1 checking, 2 up-to-date, 3 available, 4 downloading,
+// 5 ready (swap runs on app exit), 6 error
+$('btnCheckUpdate').onclick = () => post({cmd:'checkUpdate'});
+$('btnDoUpdate').onclick = () => post({cmd:'doUpdate'});
+function onUpdate(u) {
+  const t = $('updText');
+  $('btnDoUpdate').hidden = true;
+  switch (u.state) {
+    case 1: t.textContent = '正在检查更新…'; break;
+    case 2: t.textContent = '已是最新版本'; break;
+    case 3: t.textContent = '发现新版本 v' + u.latest; $('btnDoUpdate').hidden = false; break;
+    case 4: t.textContent = u.message || '正在下载更新…'; break;
+    case 5: t.textContent = '更新完成，重启应用后生效'; break;
+    case 6: t.textContent = '更新失败：' + (u.message || '未知错误'); break;
+  }
+}
+
 const PRESETS = {
-  default: { name:'默认', sensitivity:2.0, detect_threshold:0.03, classify_burst:0.04, classify_low_ratio:2.5, classify_min_crest:2.0, classify_spacing_min_ms:250, classify_spacing_max_ms:700, classify_impact_ms:60, classify_impact_ratio:2.0, classify_impact_crest:1.8, arrow_fade_ms:500, duck_enabled:true, duck_fire:0.85, duck_walk:0.65, duck_release_ms:300, duck_cone_deg:50, front_merge:true, hide_impact:false },
-  cs2:     { name:'CS2', sensitivity:2.2, detect_threshold:0.025, classify_burst:0.045, classify_low_ratio:1.5, classify_min_crest:2.0, classify_spacing_min_ms:250, classify_spacing_max_ms:700, classify_impact_ms:60, classify_impact_ratio:2.0, classify_impact_crest:1.8, arrow_fade_ms:500, duck_enabled:true, duck_fire:0.85, duck_walk:0.65, duck_release_ms:300, duck_cone_deg:50, front_merge:true, hide_impact:false },
-  valorant:{ name:'无畏契约', sensitivity:3.0, detect_threshold:0.02, classify_burst:0.03, classify_low_ratio:2.0, classify_min_crest:1.8, classify_spacing_min_ms:250, classify_spacing_max_ms:700, classify_impact_ms:60, classify_impact_ratio:2.2, classify_impact_crest:1.8, arrow_fade_ms:500, duck_enabled:true, duck_fire:0.85, duck_walk:0.65, duck_release_ms:300, duck_cone_deg:50, front_merge:true, hide_impact:true },
-  delta:   { name:'三角洲行动', sensitivity:3.0, detect_threshold:0.02, classify_burst:0.025, classify_low_ratio:2.0, classify_min_crest:1.8, classify_spacing_min_ms:220, classify_spacing_max_ms:750, classify_impact_ms:60, classify_impact_ratio:2.0, classify_impact_crest:1.8, arrow_fade_ms:600, duck_enabled:true, duck_fire:0.85, duck_walk:0.70, duck_release_ms:350, duck_cone_deg:50, front_merge:true, hide_impact:false }
+  default: { name:'默认', sensitivity:2.0, overlay_low:0.08, overlay_high:0.30, detect_threshold:0.02, classify_burst:0.02, classify_low_ratio:2.5, classify_min_crest:2.0, classify_spacing_min_ms:250, classify_spacing_max_ms:700, classify_impact_ms:60, classify_impact_ratio:2.0, classify_impact_crest:1.8, arrow_fade_ms:500, duck_enabled:true, duck_fire:0.85, duck_walk:0.65, duck_release_ms:300, duck_cone_deg:50, front_merge:true, hide_impact:false },
+  cs2:     { name:'CS2', sensitivity:2.2, overlay_low:0.08, overlay_high:0.30, detect_threshold:0.02, classify_burst:0.02, classify_low_ratio:1.5, classify_min_crest:2.0, classify_spacing_min_ms:250, classify_spacing_max_ms:700, classify_impact_ms:60, classify_impact_ratio:2.0, classify_impact_crest:1.8, arrow_fade_ms:500, duck_enabled:true, duck_fire:0.85, duck_walk:0.65, duck_release_ms:300, duck_cone_deg:50, front_merge:true, hide_impact:false },
+  valorant:{ name:'无畏契约', sensitivity:3.0, overlay_low:0.08, overlay_high:0.30, detect_threshold:0.02, classify_burst:0.02, classify_low_ratio:2.0, classify_min_crest:1.8, classify_spacing_min_ms:250, classify_spacing_max_ms:700, classify_impact_ms:60, classify_impact_ratio:2.2, classify_impact_crest:1.8, arrow_fade_ms:500, duck_enabled:true, duck_fire:0.85, duck_walk:0.65, duck_release_ms:300, duck_cone_deg:50, front_merge:true, hide_impact:true },
+  delta:   { name:'三角洲行动', sensitivity:3.0, overlay_low:0.08, overlay_high:0.30, detect_threshold:0.02, classify_burst:0.02, classify_low_ratio:2.0, classify_min_crest:1.8, classify_spacing_min_ms:220, classify_spacing_max_ms:750, classify_impact_ms:60, classify_impact_ratio:2.0, classify_impact_crest:1.8, arrow_fade_ms:600, duck_enabled:true, duck_fire:0.85, duck_walk:0.70, duck_release_ms:350, duck_cone_deg:50, front_merge:true, hide_impact:false }
 };
 // load: set the controls that exist, then post apply with the control-less
 // classify_* keys merged in (collectConfig alone would drop them)
@@ -468,6 +495,8 @@ function loadPreset(key) {
   if (!p) return;
   const set = (id, v) => { $(id).value = v; $(id)._show(); };
   set('sens', Math.round(p.sensitivity*100));
+  set('low', Math.round(p.overlay_low*100));
+  set('high', Math.round(p.overlay_high*100));
   set('dth', Math.round(p.detect_threshold*200)/2);
   set('cburst', Math.round(p.classify_burst*200)/2);
   set('afade', p.arrow_fade_ms);
@@ -520,12 +549,14 @@ $('titlebar').addEventListener('mousedown', e => {
 
 window.chrome.webview.addEventListener('message', ev => {
   if (ev.data && ev.data.type === 'state') applyState(ev.data);
+  else if (ev.data && ev.data.type === 'update') onUpdate(ev.data);
 });
 // diagnostics: report every real click to the host log
 document.addEventListener('mousedown', e => {
   post({cmd:'debugClick', id: e.target.id || e.target.className || e.target.tagName});
 }, true);
 post({cmd:'ready'});
+setTimeout(() => post({cmd:'checkUpdate'}), 2000); // one-shot auto update check
 </script>
 </body>
 </html>

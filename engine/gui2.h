@@ -20,6 +20,7 @@ namespace sr {
 
 extern const wchar_t* kGuiClassName;      // "SoundRadarMainWnd" (singleton lookup)
 constexpr UINT kMsgGuiActivate = WM_APP + 101; // second instance -> show window
+constexpr UINT kMsgUpdateStatus = WM_APP + 102; // updater worker -> GUI thread
 
 class Gui {
 public:

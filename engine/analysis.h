@@ -18,7 +18,7 @@ struct AnalysisConfig {
     float smoothMs          = 20.0f;  // display one-pole smoothing (anti-flicker)
     float silenceEps        = 1e-5f;  // block power below this counts as silence
     float peakThreshold     = 0.5f;   // level >= threshold -> peak flag
-    float activityThreshold = 0.05f;  // any channel above -> global activity flag
+    float activityThreshold = 0.02f;  // any channel above -> global activity flag
 };
 
 struct AnalysisFrame {

@@ -32,7 +32,7 @@ Game → Windows audio engine → SoundRadar VAD render pin (8ch PCM)
 
 - 8 channels map to 8 fixed directions: FL FR C LFE BL BR SL SR.
 - Each channel owns one radar sector and one edge-band segment. Levels never merge. Two loud channels at once show two sectors, never a phantom center.
-- Color by relative loudness: green = far/weak, yellow = mid, red = near/loud. Thresholds are configurable.
+- Color by relative loudness: cyan→teal below the low threshold (far/weak), teal→amber up to the high threshold, amber→red above (near/loud). Thresholds are configurable.
 - After a sound stops, the sector fades out over 300–500 ms. A one-pole smoothing filter stops flicker.
 
 ### Latency budget (end to end ≤ 30 ms)

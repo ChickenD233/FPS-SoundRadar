@@ -13,8 +13,8 @@ namespace sr {
 
 struct OverlayConfig {
     bool enabled = true;      // master on/off (tray toggle, config overlay_enabled)
-    float lowThreshold = 0.15f;  // level <= low  -> green
-    float highThreshold = 0.5f;  // low..high -> yellow, above -> red
+    float lowThreshold = 0.08f;  // level <= low  -> cyan/teal (far/weak)
+    float highThreshold = 0.30f; // low..high -> teal->amber, above -> red (near/loud)
     int offsetX = 0;          // radar center offset from screen center, px (right positive)
     int offsetY = 0;          // radar center offset from screen center, px (down positive)
     int radius = 90;          // radar ring radius, px
@@ -22,7 +22,7 @@ struct OverlayConfig {
     float sensitivity = 2.0f; // display gain 0.5-4.0, applied after sqrt mapping
     int edgeWidthPct = 100;   // edge-band thickness multiplier, percent (50-250)
     int edgeLenPct = 100;     // edge-band length multiplier, percent (50-250)
-    float detectThreshold = 0.03f;  // class-arrow detection threshold (was hardcoded 0.05)
+    float detectThreshold = 0.02f;  // class-arrow detection threshold (was hardcoded 0.05)
     bool frontMerge = true;   // merge the two front FL/FR arrows into one
     bool hideImpact = false;  // hide arrows classified as bullet impacts
     bool duckEnabled = true;  // attenuate front class arrows while own keys are held
