@@ -12,7 +12,6 @@
 #include "../classify.h"
 #include "../downmix.h"
 #include "../../overlay/arrow_tracker.h"
-#include "../../overlay/mouse_turn.h"
 
 #include <cmath>
 #include <cstdlib>
@@ -320,48 +319,6 @@ int main(int argc, char** argv) {
                   sr::DownmixModeFromName("left-mono", parsed) && parsed == sr::DownmixMono &&
                   !sr::DownmixModeFromName("garbage", parsed),
               "mode names: mono parses, old one-ear names map to mono, junk rejected");
-    }
-
-    // ------------------------------------------ 7) experimental view turn
-    std::printf("\n== 7. mouse view-turn maths ==\n");
-    {
-        const int* ringCh = sr::kArrowRingCh;
-        const float* ringAng = sr::kArrowRingAng;
-        auto drawn = [&](const float lv[8]) {
-            sr::ArrowTracker t;
-            for (int i = 0; i < 30; ++i) t.Update(lv, 0.02f, 0.016f, false, 500);
-            float best = 999.f, bestS = -1.f;
-            for (const auto& a : t.Arrows())
-                if (a.strength > bestS) { bestS = a.strength; best = a.angle; }
-            return best;
-        };
-        float lv[8] = {};
-        lv[6] = 0.5f; // SL = -90 deg
-        Check(std::fabs(drawn(lv) + 90.0f) < 1.0f, "no turn: SL stays at -90");
-
-        float out[8];
-        sr::RotateLevels(lv, out, 90.0, ringCh, ringAng);
-        Check(std::fabs(drawn(out) + 135.0f) < 1.0f, "a +90 deg view turn moves SL to rear-left");
-
-        bool snapOk = true;
-        for (double yaw : { 0.0, 15.0, 45.0, 90.0, 120.0, -30.0, -75.0 }) {
-            float c[8] = {};
-            c[2] = 0.6f; // centre, a known bearing
-            float r[8];
-            sr::RotateLevels(c, r, yaw, ringCh, ringAng);
-            const double want = std::fmod(-yaw + 540.0, 360.0) - 180.0;
-            const double got = drawn(r);
-            const double err = std::fabs(std::fmod(got - want + 540.0, 360.0) - 180.0);
-            if (err > 31.0) snapOk = false; // the channel layout has 30/60 deg steps
-        }
-        Check(snapOk, "any turn: drawn angle stays within one channel step of bearing - yaw");
-
-        // cm/360 conversion: one full turn of counts is exactly 360 degrees
-        const double d = sr::MouseDegPerCount(30.0, 800.0);
-        Check(std::fabs(d - 360.0 / ((30.0 / 2.54) * 800.0)) < 1e-12,
-              "deg per count = 360 / (cm360/2.54 * dpi)");
-        Check(sr::MouseDegPerCount(0.0, 800.0) == 0.0 && sr::MouseDegPerCount(30.0, 0.0) == 0.0,
-              "unusable DPI or cm360 gives no rotation");
     }
 
     std::printf("\n%s (%d failure(s))\n", g_fail == 0 ? "ALL PROBES PASSED" : "PROBES FAILED",

@@ -40,7 +40,6 @@ Game → SoundRadar VAD (virtual 7.1 driver) → loopback capture → SoundRadar
 - Two downmix modes, switchable live from the main window or the tray menu with no restart:
   - **Stereo (7.1 spatial image)** - the default. 7.1 folds to two channels and the left/right image is preserved.
   - **Mono** - all eight channels sum into one signal on both ears. The per-channel weight sliders apply here.
-- Experimental view compensation (off by default). It rotates the drawn sound directions by the view angle you turn, so an arrow shows where a sound sits relative to the view you have now. That cancels the perceived lag on a delayed footstep or gunshot. The mouse-to-degrees factor comes from the same cm/360 figure that pointer-sensitivity sites use to compare games: one count is 360 / (cm360 / 2.54 * dpi) degrees, with a correction slider and an invert switch for games that do not use raw input. The direction set has 7 entries, so the rotation moves in 30 or 60 degree steps.
 - Experimental sound classification: footsteps (100–300 Hz, periodic bursts) and gunshots (broadband transient) get distinct markers.
 - Overlay and classification switches never touch the audio path.
 - Latency target: end-to-end ≤ 30 ms. Measure with `SoundRadar.exe --measure` and `--measure-loopback`. Method: `docs/latency.md`.
@@ -142,7 +141,6 @@ FPS-SoundRadar 提供两个功能：
 - 两种下混模式，主窗口或托盘菜单里即时切换，不需要重启：
   - **全景声 Stereo**：默认。7.1 折叠成两声道，保留左右空间感。
   - **单声道 Mono**：8 个声道合成一路，两耳听同一份；逐声道权重滑块在这里生效。
-- 实验功能：指针跟随转向（默认关闭）。它按你转过的视角角度反向旋转声纹，让箭头指向"相对当前视角"的方位，用来抵消脚步声/枪声的延迟感。鼠标到角度的换算与灵敏度换算站点用的 cm/360 一致：一个计数 = 360 / (cm360 / 2.54 × dpi) 度，另配校正滑块与反向开关。方向集合只有 7 个，所以旋转以 30°/60° 为一步。
 - 实验性声音分类：脚步（100–300 Hz 周期性短促爆发）和枪声（宽带高瞬态）有专用标记。
 - 声纹开关和分类开关对音频链路零影响。
 - 延迟目标：端到端 ≤ 30 ms。用 `SoundRadar.exe --measure` 和 `--measure-loopback` 实测。方法见 `docs/latency.md`。

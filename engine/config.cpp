@@ -128,7 +128,6 @@ bool LoadConfig(const std::wstring& path, AppConfig& cfg) {
     GetFloatArray(json, "weights", cfg.downmix.weights, kChannels);
 
     double d;
-    bool b = false;
     if (GetNumber(json, "fade_ms", d)) cfg.analysis.fadeMs = static_cast<int>(d);
     // detection gate margin: lower = more sensitive
     if (GetNumber(json, "detect_gate_margin", d))
@@ -165,14 +164,6 @@ bool LoadConfig(const std::wstring& path, AppConfig& cfg) {
     if (GetNumber(json, "duck_release_ms", d)) cfg.overlay.duckReleaseMs = static_cast<int>(d);
     if (GetNumber(json, "duck_cone_deg", d)) cfg.overlay.duckConeDeg = static_cast<float>(d);
     if (GetNumber(json, "arrow_fade_ms", d)) cfg.overlay.arrowFadeMs = static_cast<int>(d);
-    if (GetBool(json, "mouse_turn", b)) cfg.overlay.mouseTurn = b;
-    if (GetNumber(json, "mouse_cm360", d)) cfg.overlay.mouseCm360 = d;
-    if (GetNumber(json, "mouse_dpi", d)) cfg.overlay.mouseDpi = d;
-    if (GetNumber(json, "mouse_deg_per_count", d)) cfg.overlay.mouseDegPerCount = d;
-    if (GetNumber(json, "mouse_turn_sign", d)) cfg.overlay.mouseTurnSign = d;
-    if (GetNumber(json, "mouse_cal_pct", d)) cfg.overlay.mouseCalPct = d;
-    if (GetString(json, "mouse_game", s)) cfg.overlay.mouseGame = s;
-    if (GetNumber(json, "mouse_sens", d)) cfg.overlay.mouseSens = d;
     GetBool(json, "classify_enabled", cfg.classifyEnabled);
     if (GetNumber(json, "classify_burst", d)) cfg.classify.burstThreshold = static_cast<float>(d);
     if (GetNumber(json, "classify_low_ratio", d)) cfg.classify.lowDominantRatio = static_cast<float>(d);
@@ -267,14 +258,6 @@ bool SaveConfig(const std::wstring& path, const AppConfig& cfg) {
     f << "  \"duck_release_ms\": " << cfg.overlay.duckReleaseMs << ",\n";
     f << "  \"duck_cone_deg\": " << cfg.overlay.duckConeDeg << ",\n";
     f << "  \"arrow_fade_ms\": " << cfg.overlay.arrowFadeMs << ",\n";
-    f << "  \"mouse_turn\": " << (cfg.overlay.mouseTurn ? "true" : "false") << ",\n";
-    f << "  \"mouse_cm360\": " << cfg.overlay.mouseCm360 << ",\n";
-    f << "  \"mouse_dpi\": " << cfg.overlay.mouseDpi << ",\n";
-    f << "  \"mouse_deg_per_count\": " << cfg.overlay.mouseDegPerCount << ",\n";
-    f << "  \"mouse_turn_sign\": " << cfg.overlay.mouseTurnSign << ",\n";
-    f << "  \"mouse_cal_pct\": " << cfg.overlay.mouseCalPct << ",\n";
-    f << "  \"mouse_game\": \"" << cfg.overlay.mouseGame << "\",\n";
-    f << "  \"mouse_sens\": " << cfg.overlay.mouseSens << ",\n";
     f << "  \"classify_enabled\": " << (cfg.classifyEnabled ? "true" : "false") << ",\n";
     f << "  \"classify_burst\": " << cfg.classify.burstThreshold << ",\n";
     f << "  \"classify_low_ratio\": " << cfg.classify.lowDominantRatio << ",\n";

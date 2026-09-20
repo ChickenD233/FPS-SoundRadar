@@ -337,6 +337,8 @@ footer {
   <div class="hint">显示箭头所需音量：调<b data-p="lo">低</b>更灵敏（可能误报）；调<b data-p="hi">高</b>只显示明确声音</div>
   <div class="row"><label>分类能量门限</label><span class="slide"><span class="end lo">低</span><input type="range" id="cburst" min="1" max="15" step="0.5"><span class="end hi">高</span></span><span class="val" id="cburstV"></span></div>
   <div class="hint">脚步/枪声图标所需能量：调<b data-p="lo">低</b>更容易出现；调<b data-p="hi">高</b>只标明确声音</div>
+  <div class="row"><label>检测灵敏度</label><span class="slide"><span class="end lo">低</span><input type="range" id="mtGate" min="2" max="12" step="0.5" value="4"><span class="end hi">高</span></span><span class="val" id="mtGateV"></span></div>
+  <div class="hint">能听到多轻的脚步声。<b data-p="lo">低</b> = 更灵敏（2 最灵敏，可能偶尔误报）；<b data-p="hi">高</b> = 更安静（默认 4）</div>
   <div class="row"><label class="tgl-label" style="width:auto">正前方融合</label>
     <label class="tgl"><input type="checkbox" id="fmerge"><span class="tr"></span></label>
   </div>
@@ -367,45 +369,6 @@ footer {
   <div class="hint" style="margin:0 0 6px">只作用于单声道模式。想某个声道更响就调<b data-p="hi">高</b>那格（100% = 原音量）</div>
   <div class="wgrid" id="wgrid"></div>
   <div class="btns" style="margin-top:6px"><button class="act ghost" id="resetW">重置 Reset</button></div>
-</div>
-
-<div class="card">
-  <h2>实验：指针跟随 EXPERIMENTAL · VIEW TURN</h2>
-  <div class="row"><label class="tgl-label">指针跟随转向</label>
-    <label class="tgl"><input type="checkbox" id="mtOn"><span class="tr"></span></label>
-  </div>
-  <div class="hint">开启后，随着你鼠标左右转动视角，声纹也跟着反向转动，指向"相对当前视角"的方向。
-    适合抵消声音延迟。数值不对就先填 DPI 与 cm/360，再用下面两条校正。</div>
-  <div class="row"><label>游戏</label>
-    <select id="mtGame">
-      <option value="cs2">CS2 / CS:GO（yaw 0.022）</option>
-      <option value="valorant">无畏契约 Valorant（yaw 0.070）</option>
-      <option value="apex">Apex 英雄（yaw 0.022）</option>
-      <option value="ow2">守望先锋 2（yaw 0.0066）</option>
-      <option value="custom">三角洲行动 / 其他（自己填 cm/360）</option>
-    </select></div>
-    <div class="hint">选游戏后填 DPI 和<b>游戏内灵敏度</b>，下面直接算。核对方法：在游戏里正好转一整圈（360°），
-    量一下鼠标在垫子上走了多少厘米；和括号里的数字差多少，就用"灵敏度校正"补多少</div>
-  <div class="row"><label>鼠标 DPI</label>
-    <input type="number" id="mtDpi" min="100" max="32000" step="50" placeholder="800">
-    <span class="val" id="mtDpiV" style="visibility:hidden"></span></div>
-  <div class="row" id="mtSensRow"><label>游戏内灵敏度</label>
-    <input type="number" id="mtSens" min="0.01" max="100" step="0.01" placeholder="1.00">
-    <span class="val" id="mtSensV" style="visibility:hidden"></span></div>
-  <div class="hint" id="mtRead" style="color:var(--accent)"></div>
-  <div class="row"><label>cm / 360°</label>
-    <input type="number" id="mtCmn" min="2" max="300" step="0.1" placeholder="自动">
-    <span class="val" id="mtCmnV" style="visibility:hidden"></span></div>
-  <div class="hint">鼠标走多少厘米转一整圈。选上面的游戏时自动算好并填入；选"自己填"时请自己输入（用 [xidaohai](https://xidaohai.github.io/) 等站点查到同一数值）</div>
-  <div class="row"><label>检测灵敏度</label><input type="range" id="mtGate" min="2" max="12" step="0.5" value="4"><span class="val" id="mtGateV"></span></div>
-  <div class="hint">能听到多轻的脚步声。<b data-p="lo">低</b> = 更灵敏（2 最灵敏，可能偶尔误报）；<b data-p="hi">高</b> = 更安静（默认 4）</div>
-  <div class="row"><label>灵敏度校正</label><input type="range" id="mtCal" min="50" max="200" step="1"><span class="val" id="mtCalV"></span></div>
-  <div class="hint">按上面的数值算出来的转角若和实际不一致，就拖这条：<b data-p="hi">高</b> = 转得更多（视角更灵敏），<b data-p="lo">低</b> = 转得更少。100% 为按公式计算</div>
-  <div class="row"><label class="tgl-label">反向</label>
-    <label class="tgl"><input type="checkbox" id="mtInv"><span class="tr"></span></label>
-  </div>
-  <div class="hint">如果声纹转向和你的鼠标方向相反，打开这个开关</div>
-  <div class="hint" style="color:var(--hi)">注意：本功能按音频的 8 声道布局取方向，所以转动是按 30°/60° 一档跳的，不是连续的。公开测试版，若游戏不支持原始鼠标输入或开了鼠标加速，需要靠"灵敏度校正"手调。</div>
 </div>
 
 <div class="card">
@@ -478,22 +441,6 @@ function mkMap(loHue, hiHue) {
              glow: `hsla(${h.toFixed(1)}, 70%, 66%, .35)` };
   };
 }
-// Game yaw (m_yaw): degrees of view rotation for one mouse count at
-// sensitivity 1.0. CS2, CS:GO and the other Source games use 0.022; Apex shares
-// it; Valorant uses 0.07; Overwatch 2 and Call of Duty use 0.0066. These are the
-// same constants the cross-game converters publish, and they also give the
-// cross-game ratio those sites quote (Valorant = CS2 * 0.07 / 0.022 = 3.18).
-//
-// The overlay needs the angle per count, which is  sens * yaw  degrees.
-// The same numbers also give the physical travel:
-//     cm/360 = (360 * 2.54) / (DPI * sens * yaw * 2.54) * 2.54 ...
-// Publishers disagree by a factor of two on that last step, so this panel does
-// not print cm/360 as a fact. It prints the angle that the overlay actually
-// uses, plus a check the field can settle: turn exactly 360 degrees in the game
-// and mark the mouse travel. If the mark does not match the hand-measured
-// distance, use the correction slider or type your measured cm/360.
-const MOUSE_YAW = { cs2: 0.022, apex: 0.022, valorant: 0.07, ow2: 0.0066 };
-
 // Sets a slider from code and refreshes its display. applyState has its own
 // local helper; code outside it must not reach for that one.
 function setSlider(id, v) {
@@ -501,44 +448,6 @@ function setSlider(id, v) {
   if (!el) return;
   el.value = v;
   if (el._show) el._show();
-}
-
-function selectedGame() {
-  const el = $("mtGame");
-  return el ? el.value : "custom";
-}
-function updateMouseReadout() {
-  const el = document.getElementById("mtRead");
-  if (!el) return;
-  const game = selectedGame();
-  const dpi = $("mtDpi") ? +$("mtDpi").value : 0;
-  const cal = $("mtCal") ? +$("mtCal").value / 100 : 1;
-  const isCustom = (game === "custom");
-  const sensRow = document.getElementById("mtSensRow");
-  if (sensRow) sensRow.style.display = isCustom ? "none" : "";
-
-  if (!isCustom) {
-    const sens = $("mtSens") ? +$("mtSens").value : 0;
-    if (dpi > 1 && sens > 0) {
-      const yaw = MOUSE_YAW[game];
-      const degPerCount = sens * yaw * cal;       // what the overlay applies
-      const countsPerTurn = 360 / degPerCount;
-      const cmPer360 = (countsPerTurn / dpi) * 2.54;
-      const cmf = $("mtCmn");
-      if (cmf && document.activeElement !== cmf) cmf.value = cmPer360.toFixed(2);
-      el.innerHTML = `每计数转 <b>${degPerCount.toFixed(5)}°</b>` +
-                     `（转一整圈 ${Math.round(countsPerTurn)} 个计数 ≈ <b>${cmPer360.toFixed(1)} cm</b>）` +
-                     `；校正 ${Math.round(cal * 100)}%`;
-      return;
-    }
-    el.textContent = "填入 DPI 与游戏内灵敏度后显示换算结果";
-    return;
-  }
-  const cm = $("mtCmn") ? +$("mtCmn").value : 0;
-  if (dpi <= 1 || cm <= 1) { el.textContent = "填入 DPI 与 cm/360 后显示换算结果"; return; }
-  const perTurn = (cm / 2.54) * dpi;
-  el.innerHTML = `换算结果：每 360° 需要 <b>${Math.round(perTurn)}</b> 个鼠标计数；` +
-                 `每计数 <b>${((360 / perTurn) * cal).toFixed(5)}°</b>（校正 ${Math.round(cal * 100)}%）`;
 }
 
 function paintHint(root) {
@@ -577,11 +486,11 @@ paintHint(document);
 wireTouch(["fade", "afade", "radius", "posX", "posY", "fx", "low", "high", "sens",
            "edgeW", "edgeL", "dth", "cburst", "duckFire", "duckWalk", "duckRel", "duckCone",
            "w0", "w1", "w2", "w3", "w4", "w5", "w6", "w7",
-           "mtDpi", "mtSens", "mtCmn", "mtGame", "mtCal", "mtGate",
-           "ovOn", "clsOn", "autoOn", "fmerge", "hideImp", "duckOn", "mtOn", "mtInv"]);
+           "mtGate",
+           "ovOn", "clsOn", "autoOn", "fmerge", "hideImp", "duckOn"]);
 // Switches apply at once, the same as a slider change. A toggle that needed a
 // separate Apply click is easy to read as "the switch does nothing".
-for (const id of ["mtOn", "mtInv", "ovOn", "clsOn", "autoOn", "fmerge", "hideImp", "duckOn"]) {
+for (const id of ["ovOn", "clsOn", "autoOn", "fmerge", "hideImp", "duckOn"]) {
   const el = document.getElementById(id);
   if (el) el.addEventListener("change", () => { if (window.__instantApply) window.__instantApply(); });
 }
@@ -599,11 +508,6 @@ bindSlider('edgeL', v => v + '%');
 bindSlider('dth', v => (v/100).toFixed(2));
 bindSlider('cburst', v => (v/100).toFixed(2));
 bindSlider('mtGate', v => (+v).toFixed(1) + ' dB');
-bindSlider('mtCal', v => v + '%');
-if ($('mtCmn')) $('mtCmn').addEventListener('change', updateMouseReadout);
-if ($('mtDpi')) $('mtDpi').addEventListener('change', updateMouseReadout);
-if ($('mtSens')) $('mtSens').addEventListener('change', updateMouseReadout);
-if ($('mtGame')) $('mtGame').addEventListener('change', updateMouseReadout);
 bindSlider('duckFire', v => (v/100).toFixed(2));
 bindSlider('duckWalk', v => (v/100).toFixed(2));
 bindSlider('duckRel', v => v + ' ms');
@@ -678,22 +582,7 @@ function applyState(s) {
   set('low', Math.round(c.overlay_low*100)); set('high', Math.round(c.overlay_high*100));
   set('posX', c.pos_x_pct); set('posY', c.pos_y_pct); set('fx', c.overlay_fx);
   if (c.sensitivity !== undefined) set('sens', Math.round(c.sensitivity*100));
-  if (c.mouse_turn !== undefined && $('mtOn'))
-    guardSet('mtOn', () => { $('mtOn').checked = !!c.mouse_turn; });
-  if (c.mouse_dpi !== undefined && $('mtDpi'))
-    guardSet('mtDpi', () => { $('mtDpi').value = Math.round(c.mouse_dpi); });
-  if (c.mouse_cm360 !== undefined && $('mtCmn'))
-    guardSet('mtCmn', () => { $('mtCmn').value = (+c.mouse_cm360).toFixed(2); });
-  if (c.mouse_cal_pct !== undefined && $('mtCal')) set('mtCal', c.mouse_cal_pct);
   if (c.detect_gate_margin !== undefined && $('mtGate')) set('mtGate', c.detect_gate_margin);
-  if (c.mouse_deg_per_count > 0) set('mtCal', c.mouse_deg_per_count); // legacy absolute value
-  if (c.mouse_game !== undefined && $('mtGame'))
-    guardSet('mtGame', () => { $('mtGame').value = c.mouse_game; });
-  if (c.mouse_sens !== undefined && $('mtSens'))
-    guardSet('mtSens', () => { $('mtSens').value = c.mouse_sens; });
-  if (c.mouse_turn_sign !== undefined && $('mtInv'))
-    guardSet('mtInv', () => { $('mtInv').checked = (c.mouse_turn_sign < 0); });
-  updateMouseReadout();
   if (c.edge_width !== undefined) set('edgeW', c.edge_width);
   if (c.edge_len !== undefined) set('edgeL', c.edge_len);
   set('dth', Math.round((c.detect_threshold !== undefined ? c.detect_threshold : 0.005)*200)/2);
@@ -721,17 +610,7 @@ function applyState(s) {
 function collectConfig() {
   return {
     mode: $('selMode') ? $('selMode').value : 'stereo',
-    mouse_turn: $('mtOn') ? $('mtOn').checked : false,
-    mouse_dpi: $('mtDpi') ? +$('mtDpi').value : 800,
-    mouse_cm360: $('mtCmn') ? +$('mtCmn').value : 30,
-    // 0 = the engine computes deg/count from DPI and cm/360. The correction
-    // slider is applied in the engine, so one formula serves both places.
-    mouse_deg_per_count: 0,
-    mouse_cal_pct: $('mtCal') ? +$('mtCal').value : 100,
     detect_gate_margin: $('mtGate') ? +$('mtGate').value : 4,
-    mouse_game: selectedGame(),
-    mouse_sens: $('mtSens') ? +$('mtSens').value : 0,
-    mouse_turn_sign: ($('mtInv') && $('mtInv').checked) ? -1 : 1,
     overlay_enabled: $('ovOn').checked,
     classify_enabled: $('clsOn').checked,
     autostart: $('autoOn').checked,

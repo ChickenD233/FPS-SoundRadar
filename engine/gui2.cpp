@@ -471,14 +471,6 @@ void Gui::PushState() {
     addNum("duck_release_ms", cfg.overlay.duckReleaseMs);
     addNum("duck_cone_deg", cfg.overlay.duckConeDeg);
     addNum("arrow_fade_ms", cfg.overlay.arrowFadeMs);
-    j += ",\"mouse_turn\":"; j += cfg.overlay.mouseTurn ? "true" : "false";
-    addNum("mouse_dpi", cfg.overlay.mouseDpi);
-    addNum("mouse_cm360", cfg.overlay.mouseCm360);
-    addNum("mouse_deg_per_count", cfg.overlay.mouseDegPerCount);
-    addNum("mouse_turn_sign", cfg.overlay.mouseTurnSign);
-    addNum("mouse_cal_pct", cfg.overlay.mouseCalPct);
-    j += ",\"mouse_game\":\""; j += cfg.overlay.mouseGame; j += "\"";
-    addNum("mouse_sens", cfg.overlay.mouseSens);
     j += ",\"front_merge\":"; j += cfg.overlay.frontMerge ? "true" : "false";
     j += ",\"hide_impact\":"; j += cfg.overlay.hideImpact ? "true" : "false";
     j += ",\"duck_enabled\":"; j += cfg.overlay.duckEnabled ? "true" : "false";
@@ -767,32 +759,6 @@ void Gui::ApplyFromJson(const std::string& cj, int selIn, int selOut) {
         cfg.overlay.arrowFadeMs = static_cast<int>(d);
     if (cfg.overlay.arrowFadeMs < 150) cfg.overlay.arrowFadeMs = 150;
     if (cfg.overlay.arrowFadeMs > 1200) cfg.overlay.arrowFadeMs = 1200;
-    // Experimental view compensation. This block was missing: PushState sent
-    // these fields to the page, but Apply never read them back, so the page
-    // looked like it could not store them - every Apply dropped the change and
-    // the next 500 ms push restored the old value. Every other control had a
-    // reader here, which is why only this card misbehaved.
-    JBool(cj, "mouse_turn", cfg.overlay.mouseTurn);
-    if (JNum(cj, "mouse_dpi", d)) cfg.overlay.mouseDpi = d;
-    if (cfg.overlay.mouseDpi < 100.0) cfg.overlay.mouseDpi = 100.0;
-    if (cfg.overlay.mouseDpi > 32000.0) cfg.overlay.mouseDpi = 32000.0;
-    if (JNum(cj, "mouse_cm360", d)) cfg.overlay.mouseCm360 = d;
-    if (cfg.overlay.mouseCm360 < 2.0) cfg.overlay.mouseCm360 = 2.0;
-    if (cfg.overlay.mouseCm360 > 300.0) cfg.overlay.mouseCm360 = 300.0;
-    if (JNum(cj, "mouse_deg_per_count", d)) cfg.overlay.mouseDegPerCount = d;
-    if (cfg.overlay.mouseDegPerCount < 0.0) cfg.overlay.mouseDegPerCount = 0.0;
-    if (cfg.overlay.mouseDegPerCount > 1.0) cfg.overlay.mouseDegPerCount = 1.0;
-    if (JNum(cj, "mouse_cal_pct", d)) cfg.overlay.mouseCalPct = d;
-    if (cfg.overlay.mouseCalPct < 10.0) cfg.overlay.mouseCalPct = 10.0;
-    if (cfg.overlay.mouseCalPct > 1000.0) cfg.overlay.mouseCalPct = 1000.0;
-    if (JNum(cj, "mouse_sens", d)) cfg.overlay.mouseSens = d;
-    if (cfg.overlay.mouseSens < 0.0) cfg.overlay.mouseSens = 0.0;
-    if (cfg.overlay.mouseSens > 1000.0) cfg.overlay.mouseSens = 1000.0;
-    cfg.overlay.mouseTurnSign = (cfg.overlay.mouseTurnSign < 0.0) ? -1.0 : 1.0;
-    if (JNum(cj, "mouse_turn_sign", d))
-        cfg.overlay.mouseTurnSign = (d < 0.0) ? -1.0 : 1.0;
-    if (JStr(cj, "mouse_game", s)) cfg.overlay.mouseGame = s;
-    if (cfg.overlay.mouseGame.empty()) cfg.overlay.mouseGame = "cs2";
     JFloatArray(cj, "weights", cfg.downmix.weights, 8);
 
     bool wantAuto = AutostartIsEnabled();
