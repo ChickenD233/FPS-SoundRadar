@@ -9,6 +9,11 @@
 //   4) a loud passage does not blind the detector afterwards.
 #include "selftest_detect.h"
 
+// MSVC needs this before <cmath> for M_PI.
+#ifndef _USE_MATH_DEFINES
+#define _USE_MATH_DEFINES
+#endif
+
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
