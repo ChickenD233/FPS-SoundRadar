@@ -23,7 +23,7 @@ enum SoundClass : uint8_t {
 
 struct ClassifyConfig {
     float sampleRate = 48000.0f;
-    float burstThreshold = 0.08f;  // block RMS that starts a burst
+    float burstThreshold = 0.04f;  // block RMS that starts a burst
     float maxBurstMs = 250.0f;     // longer bursts are "sustained", never classified
     float lowDominantRatio = 2.5f; // lowE > ratio * highE -> low-band dominant
     float broadbandRatio = 0.4f;   // highE > ratio * lowE  -> broadband

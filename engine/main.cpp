@@ -178,7 +178,7 @@ struct Pipeline {
         sr::AnalysisConfig acfg = cfg.analysis;
         acfg.sampleRate = static_cast<float>(cap_->GetFormat().sampleRate);
         analyzer_ = std::make_unique<sr::Analyzer>(acfg);
-        sr::ClassifyConfig ccfg;
+        sr::ClassifyConfig ccfg = cfg.classify;
         ccfg.sampleRate = static_cast<float>(cap_->GetFormat().sampleRate);
         classifier_ = std::make_unique<sr::Classifier8>(ccfg);
         meters_ = meters;

@@ -219,9 +219,10 @@ bool Gui::Create(const Hooks& hooks, bool hidden) {
     }
 
     // frameless window, rounded corners via DWM; WS_EX_APPWINDOW keeps a
-    // taskbar button (popup windows need it explicitly)
-    RECT rc = { 0, 0, 560, 900 };
-    int w = rc.right - rc.left, h = rc.bottom - rc.top;
+    // taskbar button (popup windows need it explicitly). 560x900 is in 96-DPI
+    // units; scale to physical px so the CSS viewport keeps its width.
+    UINT dpi = GetDpiForSystem();
+    int w = MulDiv(560, dpi, 96), h = MulDiv(900, dpi, 96);
     int x = (GetSystemMetrics(SM_CXSCREEN) - w) / 2;
     int y = (GetSystemMetrics(SM_CYSCREEN) - h) / 2;
     hwnd_ = CreateWindowExW(WS_EX_APPWINDOW, kGuiClassName, L"SoundRadar 声纹雷达",
@@ -455,6 +456,14 @@ void Gui::PushState() {
     addNum("sensitivity", cfg.overlay.sensitivity);
     addNum("edge_width", cfg.overlay.edgeWidthPct);
     addNum("edge_len", cfg.overlay.edgeLenPct);
+    addNum("detect_threshold", cfg.overlay.detectThreshold);
+    addNum("classify_burst", cfg.classify.burstThreshold);
+    addNum("duck_fire", cfg.overlay.duckFire);
+    addNum("duck_walk", cfg.overlay.duckWalk);
+    addNum("duck_release_ms", cfg.overlay.duckReleaseMs);
+    addNum("duck_cone_deg", cfg.overlay.duckConeDeg);
+    j += ",\"front_merge\":"; j += cfg.overlay.frontMerge ? "true" : "false";
+    j += ",\"duck_enabled\":"; j += cfg.overlay.duckEnabled ? "true" : "false";
     j += ",\"overlay_enabled\":"; j += cfg.overlay.enabled ? "true" : "false";
     j += ",\"classify_enabled\":"; j += cfg.classifyEnabled ? "true" : "false";
     j += ",\"autostart\":"; j += AutostartIsEnabled() ? "true" : "false";
@@ -591,6 +600,30 @@ void Gui::ApplyFromJson(const std::string& cj, int selIn, int selOut) {
     if (JNum(cj, "sensitivity", d)) cfg.overlay.sensitivity = static_cast<float>(d);
     if (JNum(cj, "edge_width", d)) cfg.overlay.edgeWidthPct = static_cast<int>(d);
     if (JNum(cj, "edge_len", d)) cfg.overlay.edgeLenPct = static_cast<int>(d);
+    if (JNum(cj, "detect_threshold", d))
+        cfg.overlay.detectThreshold = static_cast<float>(d);
+    if (cfg.overlay.detectThreshold < 0.01f) cfg.overlay.detectThreshold = 0.01f;
+    if (cfg.overlay.detectThreshold > 0.10f) cfg.overlay.detectThreshold = 0.10f;
+    if (JNum(cj, "classify_burst", d))
+        cfg.classify.burstThreshold = static_cast<float>(d);
+    if (cfg.classify.burstThreshold < 0.01f) cfg.classify.burstThreshold = 0.01f;
+    if (cfg.classify.burstThreshold > 0.15f) cfg.classify.burstThreshold = 0.15f;
+    JBool(cj, "front_merge", cfg.overlay.frontMerge);
+    JBool(cj, "duck_enabled", cfg.overlay.duckEnabled);
+    if (JNum(cj, "duck_fire", d)) cfg.overlay.duckFire = static_cast<float>(d);
+    if (cfg.overlay.duckFire < 0.0f) cfg.overlay.duckFire = 0.0f;
+    if (cfg.overlay.duckFire > 1.0f) cfg.overlay.duckFire = 1.0f;
+    if (JNum(cj, "duck_walk", d)) cfg.overlay.duckWalk = static_cast<float>(d);
+    if (cfg.overlay.duckWalk < 0.0f) cfg.overlay.duckWalk = 0.0f;
+    if (cfg.overlay.duckWalk > 1.0f) cfg.overlay.duckWalk = 1.0f;
+    if (JNum(cj, "duck_release_ms", d))
+        cfg.overlay.duckReleaseMs = static_cast<int>(d);
+    if (cfg.overlay.duckReleaseMs < 100) cfg.overlay.duckReleaseMs = 100;
+    if (cfg.overlay.duckReleaseMs > 600) cfg.overlay.duckReleaseMs = 600;
+    if (JNum(cj, "duck_cone_deg", d))
+        cfg.overlay.duckConeDeg = static_cast<float>(d);
+    if (cfg.overlay.duckConeDeg < 30.0f) cfg.overlay.duckConeDeg = 30.0f;
+    if (cfg.overlay.duckConeDeg > 70.0f) cfg.overlay.duckConeDeg = 70.0f;
     JFloatArray(cj, "weights", cfg.downmix.weights, 8);
 
     bool wantAuto = AutostartIsEnabled();
@@ -644,18 +677,32 @@ void Gui::MeasureAndFit() {
     int contentH = 0;
     for (wchar_t c : r)
         if (c >= L'0' && c <= L'9') contentH = contentH * 10 + (c - L'0');
-    if (contentH < 400) return;
+    if (contentH < 300) return;
     // scrollHeight is in CSS px; the window is sized in physical px
     double scale = GetDpiForWindow(hwnd_) / 96.0;
     contentH = static_cast<int>(contentH * scale + 0.5);
-    int maxH = GetSystemMetrics(SM_CYSCREEN) - 60;
+    // fit inside the monitor work area (excludes the taskbar), 40px margin
+    HMONITOR mon = MonitorFromWindow(hwnd_, MONITOR_DEFAULTTONEAREST);
+    MONITORINFOW mi = { sizeof(mi) };
+    GetMonitorInfoW(mon, &mi);
+    int maxH = (mi.rcWork.bottom - mi.rcWork.top) - 40;
     if (contentH > maxH) contentH = maxH;
     RECT cr;
     GetClientRect(hwnd_, &cr);
     int curH = cr.bottom - cr.top;
-    if (curH == contentH) return;
-    SetWindowPos(hwnd_, nullptr, 0, 0, cr.right - cr.left, contentH,
-                 SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+    int width = cr.right - cr.left;
+    // keep the window (and its title bar) inside the work area
+    RECT wr;
+    GetWindowRect(hwnd_, &wr);
+    int nx = wr.left, ny = wr.top;
+    if (ny + contentH > mi.rcWork.bottom) ny = mi.rcWork.bottom - contentH;
+    if (ny < mi.rcWork.top) ny = mi.rcWork.top;
+    if (nx + width > mi.rcWork.right) nx = mi.rcWork.right - width;
+    if (nx < mi.rcWork.left) nx = mi.rcWork.left;
+    bool moved = (nx != wr.left || ny != wr.top);
+    if (curH == contentH && !moved) return;
+    SetWindowPos(hwnd_, nullptr, nx, ny, width, contentH,
+                 (moved ? 0 : SWP_NOMOVE) | SWP_NOZORDER | SWP_NOACTIVATE);
     RECT after;
     GetClientRect(hwnd_, &after);
     Log("gui2: auto-fit height %d -> %d (actual client %d)", curH, contentH,
@@ -731,6 +778,13 @@ LRESULT Gui::HandleMessage(UINT msg, WPARAM wp, LPARAM lp) {
         case WM_CLOSE:
             Hide(); // close = minimize to tray, never exit
             return 0;
+        case WM_DPICHANGED: {
+            // suggested rect keeps the CSS viewport width on the new monitor
+            const RECT* r = reinterpret_cast<const RECT*>(lp);
+            SetWindowPos(hwnd_, nullptr, r->left, r->top, r->right - r->left,
+                         r->bottom - r->top, SWP_NOZORDER | SWP_NOACTIVATE);
+            return 0;
+        }
         case WM_DESTROY:
             if (controller_) {
                 controller_->Close();

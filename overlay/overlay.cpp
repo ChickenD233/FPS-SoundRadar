@@ -79,7 +79,8 @@ public:
     };
 
     // minLevel: display threshold; dt: seconds since last call.
-    void Update(const float levels[8], float minLevel, float dt) {
+    // frontMerge: merge FL+C+FR into a single arrow for dead-ahead sound.
+    void Update(const float levels[8], float minLevel, float dt, bool frontMerge) {
         // 1) candidate peaks: level >= both ring neighbors, above threshold
         bool cand[7];
         for (int i = 0; i < 7; ++i) {
@@ -88,14 +89,38 @@ public:
             float ln = levels[kRingCh[(i + 1) % 7]];
             cand[i] = l > minLevel && l >= lp && l >= ln;
         }
+        // frontal merge: a dead-ahead sound lights FL+C+FR; when C dips below
+        // candidacy FL/FR split into two arrows. Bridge C while it still
+        // carries energy; with an empty C, balanced FL/FR and nothing else on
+        // the ring, force a single 0-deg peak instead of two centroids.
+        bool forceFront = false;
+        float forceEnergy = 0.0f;
+        if (frontMerge && cand[2] && cand[4]) { // ring idx 2/4 = FL/FR
+            float fl = levels[0], fr = levels[1];
+            float lo = fl < fr ? fl : fr, hi = fl > fr ? fl : fr;
+            if (levels[2] >= 0.35f * lo) {
+                cand[3] = true; // C bridges FL-FR into one centroid run
+            } else if (lo >= 0.5f * hi) {
+                bool others = false;
+                for (int i = 0; i < 7; ++i)
+                    if (i != 2 && i != 4 && cand[i]) { others = true; break; }
+                if (!others) { forceFront = true; forceEnergy = hi; }
+            }
+        }
         // 2) maximal circular runs of adjacent candidates -> one peak each,
         //    centroid = energy-weighted circular mean over run +/- 1 neighbor
         struct Peak { float angle, energy; };
         Peak peaks[4];
         int nPeaks = 0;
+        if (forceFront) {
+            peaks[0].angle = 0.0f;
+            peaks[0].energy = forceEnergy;
+            nPeaks = 1;
+        }
         int start = -1;
-        for (int i = 0; i < 7; ++i)
-            if (!cand[i] && cand[(i + 1) % 7]) { start = (i + 1) % 7; break; }
+        if (!forceFront)
+            for (int i = 0; i < 7; ++i)
+                if (!cand[i] && cand[(i + 1) % 7]) { start = (i + 1) % 7; break; }
         if (start >= 0) {
             int i = start;
             do {
@@ -223,7 +248,7 @@ private:
 
 // Neon sonar palette: cool cyan->teal below the low threshold, teal->amber up
 // to the high threshold, amber->red-magenta above. Threshold config semantics
-// unchanged. Alpha floor ~0.75 while active (readability).
+// unchanged. Alpha floor ~0.60 while active (readability).
 D2D1_COLOR_F NeonColor(float lvl, const OverlayConfig& cfg, float alphaScale = 1.0f) {
     static const float C0[3] = { 0.20f, 0.88f, 1.00f }; // cyan (far/weak)
     static const float C1[3] = { 0.00f, 0.82f, 0.75f }; // teal
@@ -245,7 +270,7 @@ D2D1_COLOR_F NeonColor(float lvl, const OverlayConfig& cfg, float alphaScale = 1
         b = C2[2] + (C3[2] - C2[2]) * t;
     }
     float cl = (lvl > 1.0f) ? 1.0f : lvl;
-    float a = (lvl <= 0.0f) ? 0.0f : (0.75f + 0.25f * cl);
+    float a = (lvl <= 0.0f) ? 0.0f : (0.60f + 0.40f * cl);
     return D2D1::ColorF(r, g, b, a * alphaScale);
 }
 
@@ -325,11 +350,12 @@ HRESULT CreateSceneResources(ID2D1Factory* d2dFactory, IDWriteFactory* dwFactory
     return hr;
 }
 
-// Directional jelly ribbon on the screen border: project the tracked angle
-// onto the border rect (inset 10 px), draw a wavy lens-shaped band there.
-// Quiet/far = flat, long and green; loud/near = thick, short and red, with a
-// smooth morph between. Springy overshoot on onset plus a travelling sine
-// wobble keep it "bouncy". Slides along the edge as the angle moves.
+// Directional line on the screen border: project the tracked angle onto the
+// border rect (inset 10 px), draw a wavy thin round-capped line there with a
+// faint wide under-glow. Quiet/far = long and green; loud/near = short and
+// red, with a smooth morph between. Springy overshoot on onset plus a
+// travelling sine wobble keep it "bouncy". Slides along the edge as the
+// angle moves.
 void DrawCapsule(ID2D1RenderTarget* rt, const SceneResources& res,
                  const OverlayConfig& cfg, float angleDeg, float lvl, float pulse,
                  int w, int h, float fx, float timeSec) {
@@ -355,12 +381,12 @@ void DrawCapsule(ID2D1RenderTarget* rt, const SceneResources& res,
     float inx = (edge == 3) ? 1.0f : (edge == 1) ? -1.0f : 0.0f;
     float iny = (edge == 0) ? 1.0f : (edge == 2) ? -1.0f : 0.0f;
 
-    float widMul = cfg.edgeWidthPct / 100.0f;
+    float widMul = cfg.edgeWidthPct / 100.0f; // scales the main line width
     float lenMul = cfg.edgeLenPct / 100.0f;
 
-    // loudness morph: quiet = flat & long, loud = thick & short
+    // loudness morph: quiet = long, loud = short
     float halfLen = (170.0f - 90.0f * lvl) * lenMul; // 170 -> 80 px
-    float halfTh  = (3.0f + 11.0f * lvl) * widMul;   // 3 -> 14 px
+    float halfOff = 3.0f + 11.0f * lvl;              // inward offset from border
 
     // jelly bounce: springy overshoot at onset + gentle breathing wobble
     float bounce = 1.0f;
@@ -368,57 +394,45 @@ void DrawCapsule(ID2D1RenderTarget* rt, const SceneResources& res,
         bounce += 0.50f * std::sin(pulse * kPi)
                 + 0.22f * std::sin(pulse * 2.0f * kPi) * (1.0f - pulse);
     bounce += 0.06f * std::sin(timeSec * 5.5f) * fx;
-    halfTh *= bounce;
-    halfLen *= 1.0f - 0.15f * (bounce - 1.0f); // thicker -> a bit shorter
+    halfOff *= bounce;
+    halfLen *= 1.0f - 0.15f * (bounce - 1.0f); // bouncier -> a bit shorter
 
-    const int K = 26; // ribbon samples per edge
+    const int K = 26; // line samples per edge
     float waveAmp = (1.5f + 3.5f * lvl) * fx;
     float phase = timeSec * 6.0f;
 
-    // lens-shaped wavy ribbon; inner edge rides the border, band grows inward
-    auto buildRibbon = [&](float thickScale, float waveScale,
-                           ComPtr<ID2D1PathGeometry>* out) {
-        ComPtr<ID2D1PathGeometry> geo;
-        if (FAILED(res.factory->CreatePathGeometry(&geo))) return;
+    // wavy center line riding `halfOff` inward from the border
+    ComPtr<ID2D1PathGeometry> line;
+    if (FAILED(res.factory->CreatePathGeometry(&line))) return;
+    {
         ComPtr<ID2D1GeometrySink> sink;
-        if (FAILED(geo->Open(&sink))) return;
-        for (int pass = 0; pass < 2; ++pass) {
-            int i0 = pass == 0 ? 0 : K, i1 = pass == 0 ? K : 0, di = pass == 0 ? 1 : -1;
-            float sign = pass == 0 ? -1.0f : 1.0f; // border side, then screen side
-            for (int i = i0;; i += di) {
-                float u = static_cast<float>(i) / K;         // 0..1 along band
-                float along = u * 2.0f - 1.0f;               // -1..1
-                float env = std::sin(u * kPi);               // pointed tips
-                float wave = waveAmp * waveScale * std::sin(phase + along * 5.0f) * env;
-                float th = halfTh * thickScale * (0.25f + 0.75f * env);
-                float px = hx + tx * along * halfLen + inx * (halfTh + wave + sign * th);
-                float py = hy + ty * along * halfLen + iny * (halfTh + wave + sign * th);
-                if (pass == 0 && i == 0)
-                    sink->BeginFigure(D2D1::Point2F(px, py), D2D1_FIGURE_BEGIN_FILLED);
-                else
-                    sink->AddLine(D2D1::Point2F(px, py));
-                if (i == i1) break;
-            }
+        if (FAILED(line->Open(&sink))) return;
+        for (int i = 0; i <= K; ++i) {
+            float u = static_cast<float>(i) / K;   // 0..1 along the line
+            float along = u * 2.0f - 1.0f;         // -1..1
+            float env = std::sin(u * kPi);         // wave fades at the tips
+            float wave = waveAmp * std::sin(phase + along * 5.0f) * env;
+            float px = hx + tx * along * halfLen + inx * (halfOff + wave);
+            float py = hy + ty * along * halfLen + iny * (halfOff + wave);
+            if (i == 0)
+                sink->BeginFigure(D2D1::Point2F(px, py), D2D1_FIGURE_BEGIN_HOLLOW);
+            else
+                sink->AddLine(D2D1::Point2F(px, py));
         }
-        sink->EndFigure(D2D1_FIGURE_END_CLOSED);
+        sink->EndFigure(D2D1_FIGURE_END_OPEN);
         sink->Close();
-        *out = geo;
-    };
+    }
 
     D2D1_COLOR_F col = NeonColor(lvl, cfg);
 
-    // halo: stroke the ribbon outline, two passes
-    ComPtr<ID2D1PathGeometry> ribbon;
-    buildRibbon(1.0f, 1.0f, &ribbon);
-    if (!ribbon) return;
+    // under-glow: one wide, very faint stroke (skipped when fx = 0)
     if (fx > 0.0f) {
-        res.brush->SetColor(NeonColor(lvl, cfg, 0.10f * fx));
-        rt->DrawGeometry(ribbon.Get(), res.brush.Get(), 16.0f * fx, res.roundCaps.Get());
-        res.brush->SetColor(NeonColor(lvl, cfg, 0.20f * fx));
-        rt->DrawGeometry(ribbon.Get(), res.brush.Get(), 7.0f * fx, res.roundCaps.Get());
+        res.brush->SetColor(NeonColor(lvl, cfg, (0.10f + 0.08f * lvl) * fx));
+        rt->DrawGeometry(line.Get(), res.brush.Get(), 8.0f + 10.0f * lvl,
+                         res.roundCaps.Get());
     }
 
-    // main fill: dim tips -> saturated center, along the band
+    // main line: thin round-capped stroke, dim tips -> saturated center
     {
         D2D1_COLOR_F dim = col, bright = col;
         dim.r *= 0.45f; dim.g *= 0.45f; dim.b *= 0.45f;
@@ -438,42 +452,12 @@ void DrawCapsule(ID2D1RenderTarget* rt, const SceneResources& res,
                     D2D1::Point2F(hx - tx * halfLen, hy - ty * halfLen),
                     D2D1::Point2F(hx + tx * halfLen, hy + ty * halfLen)),
                 gsc.Get(), &grad);
+        float lineW = (2.0f + 4.0f * lvl) * widMul;
         if (grad)
-            rt->FillGeometry(ribbon.Get(), grad.Get());
+            rt->DrawGeometry(line.Get(), grad.Get(), lineW, res.roundCaps.Get());
         else {
             res.brush->SetColor(col);
-            rt->FillGeometry(ribbon.Get(), res.brush.Get());
-        }
-    }
-
-    // hot core: thinner brighter ribbon inside
-    ComPtr<ID2D1PathGeometry> core;
-    buildRibbon(0.38f, 0.5f, &core);
-    if (core) {
-        res.brush->SetColor(D2D1::ColorF(1, 1, 1, 0.16f + 0.30f * lvl));
-        rt->FillGeometry(core.Get(), res.brush.Get());
-    }
-
-    // travelling shimmer spot along the band (~1.2 s period)
-    if (fx > 0.0f) {
-        float sp = std::fmod(timeSec / 1.2f, 1.0f) * 2.0f - 1.0f; // -1..1
-        float u = (sp + 1.0f) * 0.5f;
-        float env = std::sin(u * kPi);
-        float wave = waveAmp * std::sin(phase + sp * 5.0f) * env;
-        float sx = hx + tx * sp * halfLen + inx * (halfTh + wave);
-        float sy = hy + ty * sp * halfLen + iny * (halfTh + wave);
-        res.brush->SetColor(D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.50f * fx));
-        ComPtr<ID2D1PathGeometry> spot;
-        if (SUCCEEDED(res.factory->CreatePathGeometry(&spot))) {
-            ComPtr<ID2D1GeometrySink> sink;
-            if (SUCCEEDED(spot->Open(&sink))) {
-                sink->BeginFigure(D2D1::Point2F(sx - tx * 10.0f, sy - ty * 10.0f),
-                                  D2D1_FIGURE_BEGIN_HOLLOW);
-                sink->AddLine(D2D1::Point2F(sx + tx * 10.0f, sy + ty * 10.0f));
-                sink->EndFigure(D2D1_FIGURE_END_OPEN);
-                sink->Close();
-            }
-            rt->DrawGeometry(spot.Get(), res.brush.Get(), halfTh * 1.1f,
+            rt->DrawGeometry(line.Get(), res.brush.Get(), lineW,
                              res.roundCaps.Get());
         }
     }
@@ -486,15 +470,27 @@ void DrawCapsule(ID2D1RenderTarget* rt, const SceneResources& res,
 // onset ripple, and vector type icons (footstep pair / gunshot spark).
 void DrawScene(ID2D1RenderTarget* rt, const SceneResources& res, const OverlayConfig& cfg,
                const std::vector<ArrowTracker::Arrow>& arrows, float timeSec,
-               const uint8_t* classes, bool classifyOn, int w, int h) {
+               float duckAmt, const uint8_t* classes, bool classifyOn, int w, int h) {
     float cx = w * 0.5f + static_cast<float>(cfg.offsetX);
     float cy = h * 0.5f + static_cast<float>(cfg.offsetY);
     float r = static_cast<float>(cfg.radius);
     float fx = cfg.fxPct / 100.0f;
 
+    // duck: soften frontal arrows (own gunfire/steps) while keys are held.
+    // Full cut inside +-duckConeDeg, linear ramp over the next 20 deg.
+    auto duckLevel = [&](float angle, float strength) {
+        if (duckAmt <= 0.0f || !cfg.duckEnabled) return strength;
+        float ad = std::fabs(AngDist(angle, 0.0f));
+        float factor = 1.0f;
+        if (ad <= cfg.duckConeDeg) factor = 1.0f - duckAmt;
+        else if (ad < cfg.duckConeDeg + 20.0f)
+            factor = 1.0f - duckAmt * (1.0f - (ad - cfg.duckConeDeg) / 20.0f);
+        return strength * factor;
+    };
+
     for (const auto& a : arrows) {
-        if (a.strength <= 0.02f) continue;
-        float lvl = a.strength;
+        float lvl = duckLevel(a.angle, a.strength);
+        if (lvl <= 0.02f) continue;
         // scale-in pop over ~150 ms after spawn
         float pop = (a.age < 0.15f) ? 0.6f + 0.4f * (a.age / 0.15f) : 1.0f;
         float len = (18.0f + 16.0f * lvl) * pop;   // 18..34 px, loud = longer
@@ -531,10 +527,10 @@ void DrawScene(ID2D1RenderTarget* rt, const SceneResources& res, const OverlayCo
         {
             ComPtr<ID2D1PathGeometry> core =
                 MakeArrowAt(res.factory.Get(), cx, cy, r - len * 0.06f,
-                            len * 0.52f, halfW * 0.42f);
+                            len * 0.42f, halfW * 0.42f);
             if (core) {
                 rt->SetTransform(D2D1::Matrix3x2F::Rotation(a.angle, D2D1::Point2F(cx, cy)));
-                res.brush->SetColor(D2D1::ColorF(1, 1, 1, 0.25f + 0.35f * lvl));
+                res.brush->SetColor(D2D1::ColorF(1, 1, 1, 0.125f + 0.175f * lvl));
                 rt->FillGeometry(core.Get(), res.brush.Get());
                 rt->SetTransform(D2D1::Matrix3x2F::Identity());
             }
@@ -603,10 +599,11 @@ void DrawScene(ID2D1RenderTarget* rt, const SceneResources& res, const OverlayCo
                            res.cornerLayout.Get(), res.textBrush.Get());
     }
 
-    // edge capsules: one sliding border segment per tracked cluster
+    // edge lines: one sliding border segment per tracked cluster
     for (const auto& a : arrows) {
-        if (a.strength <= 0.02f) continue;
-        DrawCapsule(rt, res, cfg, a.angle, a.strength, a.pulse, w, h, fx, timeSec);
+        float lvl = duckLevel(a.angle, a.strength);
+        if (lvl <= 0.02f) continue;
+        DrawCapsule(rt, res, cfg, a.angle, lvl, a.pulse, w, h, fx, timeSec);
     }
 }
 
@@ -816,6 +813,7 @@ void Overlay::ThreadMain(bool visible) {
     bool stereoMode_ = false;  // active-channel auto-detect (hysteresis)
     float modeTimer_ = 0.0f;
     float timeSec_ = 0.0f;     // shimmer clock (advances only while active)
+    float duckAmt_ = 0.0f;     // front-duck envelope 0..1 (fire/walk keys)
 
     // --- render loop: ~60 fps while audio active, ~4 fps polling when idle --
     HANDLE waits[2] = { quitEvent_, stopEvent_ };
@@ -885,12 +883,34 @@ void Overlay::ThreadMain(bool visible) {
             if (active) tracker.UpdateStereo(frame.level[0], frame.level[1], dt);
             else tracker.UpdateStereo(0.0f, 0.0f, dt); // fade out
         } else if (active) {
-            tracker.Update(frame.level, 0.05f, dt);
+            tracker.Update(frame.level, cfg_.detectThreshold, dt, cfg_.frontMerge);
         } else {
             float zeros[8] = {};
-            tracker.Update(zeros, 0.05f, dt); // lets arrows fade out
+            tracker.Update(zeros, cfg_.detectThreshold, dt, cfg_.frontMerge);
         }
         if (active) timeSec_ += dt; // shimmer clock pauses when idle
+
+        // duck envelope: read-only poll of fire/walk keys, fast attack
+        // (~20 ms), linear release over duckReleaseMs
+        if (cfg_.duckEnabled) {
+            bool firing = (GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0;
+            bool walking = (GetAsyncKeyState('W') & 0x8000) != 0 ||
+                           (GetAsyncKeyState('A') & 0x8000) != 0 ||
+                           (GetAsyncKeyState('S') & 0x8000) != 0 ||
+                           (GetAsyncKeyState('D') & 0x8000) != 0;
+            float target = firing ? cfg_.duckFire
+                                  : (walking ? cfg_.duckWalk : 0.0f);
+            if (target > duckAmt_) {
+                duckAmt_ += (target - duckAmt_) * (1.0f - std::exp(-dt / 0.02f));
+            } else {
+                float relSec = cfg_.duckReleaseMs > 0
+                                   ? cfg_.duckReleaseMs * 0.001f : 0.001f;
+                duckAmt_ -= dt / relSec;
+                if (duckAmt_ < target) duckAmt_ = target;
+            }
+        } else {
+            duckAmt_ = 0.0f;
+        }
 
         {
             std::lock_guard<std::mutex> lk(debugMu_);
@@ -921,7 +941,7 @@ void Overlay::ThreadMain(bool visible) {
                 dc->BeginDraw();
                 dc->Clear(D2D1::ColorF(0, 0, 0, 0)); // fully transparent base
                 DrawScene(dc.Get(), res, cfg_, tracker.Arrows(), timeSec_,
-                          classes, g_classifyEnabled.load(), w, h);
+                          duckAmt_, classes, g_classifyEnabled.load(), w, h);
                 fhr = dc->EndDraw();
                 dc->SetTarget(nullptr);
             }
@@ -997,11 +1017,11 @@ bool RenderSceneToFile(const std::wstring& path, int width, int height,
     if (SUCCEEDED(hr)) {
         // one-shot tracker run (long dt -> snaps to centroids, ripple mid-way)
         ArrowTracker tracker;
-        tracker.Update(levels, 0.05f, 0.5f);
-        tracker.Update(levels, 0.05f, 0.1f);
+        tracker.Update(levels, cfg.detectThreshold, 0.5f, cfg.frontMerge);
+        tracker.Update(levels, cfg.detectThreshold, 0.1f, cfg.frontMerge);
         rt->BeginDraw();
         rt->Clear(D2D1::ColorF(0.06f, 0.06f, 0.09f, 1.0f)); // opaque dark backdrop
-        DrawScene(rt.Get(), res, cfg, tracker.Arrows(), 0.35f, classes,
+        DrawScene(rt.Get(), res, cfg, tracker.Arrows(), 0.35f, 0.0f, classes,
                   classes != nullptr, width, height);
         hr = rt->EndDraw();
     }

@@ -6,6 +6,7 @@
 #include <string>
 
 #include "analysis.h"
+#include "classify.h"
 #include "downmix.h"
 
 namespace sr {
@@ -21,6 +22,13 @@ struct OverlayConfig {
     float sensitivity = 2.0f; // display gain 0.5-4.0, applied after sqrt mapping
     int edgeWidthPct = 100;   // edge-band thickness multiplier, percent (50-250)
     int edgeLenPct = 100;     // edge-band length multiplier, percent (50-250)
+    float detectThreshold = 0.03f;  // class-arrow detection threshold (was hardcoded 0.05)
+    bool frontMerge = true;   // merge the two front FL/FR arrows into one
+    bool duckEnabled = true;  // attenuate front class arrows while own keys are held
+    float duckFire = 0.85f;   // attenuation 0-1 while LMB is held
+    float duckWalk = 0.65f;   // attenuation 0-1 while WASD is held
+    int duckReleaseMs = 300;  // attenuation tail after key release, ms
+    float duckConeDeg = 50.f; // front cone half-angle the attenuation applies to, +-deg
 };
 
 struct AppConfig {
@@ -33,6 +41,7 @@ struct AppConfig {
     OverlayConfig overlay;
     bool autostart = false;       // consumed by the autostart milestone
     bool classifyEnabled = true;  // experimental sound classification display
+    ClassifyConfig classify;      // burst/footstep heuristic tuning
     bool renderExclusive = false; // shared mode by default; exclusive crackles on some USB DACs
 };
 

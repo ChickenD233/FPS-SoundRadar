@@ -134,7 +134,7 @@ select:focus { border-color: var(--accent); }
 
 /* range: thin track, glowing 16px thumb */
 input[type=range] {
-  -webkit-appearance: none; appearance: none; flex: 1; height: 4px; border-radius: 2px;
+  -webkit-appearance: none; appearance: none; flex: 1; min-width: 0; height: 4px; border-radius: 2px;
   background: linear-gradient(90deg, var(--accent) var(--fill,50%), #2a3040 var(--fill,50%));
   outline: none; cursor: pointer;
 }
@@ -157,11 +157,11 @@ input[type=range]:active::-webkit-slider-thumb { transform: scale(1.15); }
 .wgrid .val { width: 46px; }
 
 /* buttons */
-.btns { display: flex; gap: 8px; justify-content: flex-end; margin: 2px 0 10px; }
+.btns { display: flex; gap: 8px; justify-content: flex-end; flex-wrap: wrap; margin: 2px 0 10px; }
 button.act {
   border-radius: 9px; padding: 8px 16px; cursor: pointer; font-family: inherit;
   font-size: 12.5px; border: 1px solid var(--accent); background: transparent;
-  color: var(--accent); transition: all .15s;
+  color: var(--accent); transition: all .15s; white-space: nowrap;
 }
 button.act:hover { background: rgba(0,210,200,.12); box-shadow: 0 0 12px var(--accent-dim); }
 button.act.primary { background: var(--accent); color: #06121a; font-weight: 600; }
@@ -198,6 +198,12 @@ footer {
   <button class="tbtn close" id="btnTitleClose" title="最小化到托盘">✕</button>
 </div>
 <div id="content">
+<div class="seg" id="tabs" style="margin-bottom:10px">
+  <button id="tabBasic" class="on">基础</button>
+  <button id="tabAdv">高级</button>
+</div>
+
+<div id="pageBasic">
 <div class="card">
   <h2>设备 DEVICES</h2>
   <div class="row"><label>输入/捕获</label><select id="selIn"></select></div>
@@ -206,15 +212,21 @@ footer {
 </div>
 
 <div class="card">
-  <h2>声纹样式 OVERLAY</h2>
+  <h2>声纹 OVERLAY</h2>
   <div class="row"><label class="tgl-label">显示声纹</label>
     <label class="tgl"><input type="checkbox" id="ovOn"><span class="tr"></span></label>
   </div>
+  <div class="row"><label>灵敏度 Sens.</label><input type="range" id="sens" min="50" max="400" step="10"><span class="val" id="sensV"></span></div>
+</div>
+</div>
+
+<div id="pageAdv" hidden>
+<div class="card">
+  <h2>声纹样式 OVERLAY</h2>
   <h3>内圈 · 方向箭头 INNER ARROWS</h3>
   <div class="row"><label>雷达大小</label><input type="range" id="radius" min="60" max="160" step="1"><span class="val" id="radiusV"></span></div>
   <div class="row"><label>位置X</label><input type="range" id="posX" min="-50" max="50" step="1"><span class="val" id="posXV"></span></div>
   <div class="row"><label>位置Y</label><input type="range" id="posY" min="0" max="50" step="1"><span class="val" id="posYV"></span></div>
-  <div class="row"><label>灵敏度 Sens.</label><input type="range" id="sens" min="50" max="400" step="10"><span class="val" id="sensV"></span></div>
   <div class="row"><label>渐隐时间</label><input type="range" id="fade" min="300" max="500" step="10"><span class="val" id="fadeV"></span></div>
   <h3>外圈 · 边缘条带 EDGE BANDS</h3>
   <div class="row"><label>条带粗细</label><input type="range" id="edgeW" min="50" max="250" step="5"><span class="val" id="edgeWV"></span></div>
@@ -222,6 +234,26 @@ footer {
   <div class="row"><label>特效强度</label><input type="range" id="fx" min="0" max="100" step="1"><span class="val" id="fxV"></span></div>
   <div class="row"><label>阈值 绿→黄</label><input type="range" id="low" min="5" max="95" step="1"><span class="val" id="lowV"></span></div>
   <div class="row"><label>阈值 黄→红</label><input type="range" id="high" min="5" max="95" step="1"><span class="val" id="highV"></span></div>
+</div>
+
+<div class="card">
+  <h2>检测 DETECTION</h2>
+  <div class="row"><label>检测门限</label><input type="range" id="dth" min="1" max="10" step="1"><span class="val" id="dthV"></span></div>
+  <div class="row"><label>分类能量门限</label><input type="range" id="cburst" min="1" max="15" step="1"><span class="val" id="cburstV"></span></div>
+  <div class="row"><label class="tgl-label" style="width:auto">正前方融合</label>
+    <label class="tgl"><input type="checkbox" id="fmerge"><span class="tr"></span></label>
+  </div>
+</div>
+
+<div class="card">
+  <h2>屏蔽自己的声音 SELF-DUCK</h2>
+  <div class="row"><label class="tgl-label">启用</label>
+    <label class="tgl"><input type="checkbox" id="duckOn"><span class="tr"></span></label>
+  </div>
+  <div class="row"><label>开枪削弱</label><input type="range" id="duckFire" min="0" max="100" step="5"><span class="val" id="duckFireV"></span></div>
+  <div class="row"><label>走路削弱</label><input type="range" id="duckWalk" min="0" max="100" step="5"><span class="val" id="duckWalkV"></span></div>
+  <div class="row"><label>拖尾</label><input type="range" id="duckRel" min="100" max="600" step="20"><span class="val" id="duckRelV"></span></div>
+  <div class="row"><label>前锥角</label><input type="range" id="duckCone" min="30" max="70" step="5"><span class="val" id="duckConeV"></span></div>
 </div>
 
 <div class="card">
@@ -238,6 +270,7 @@ footer {
   <div class="row"><label class="tgl-label" style="width:auto">开机自启</label>
     <label class="tgl"><input type="checkbox" id="autoOn"><span class="tr"></span></label>
   </div>
+</div>
 </div>
 
 <div class="btns">
@@ -293,6 +326,12 @@ bindSlider('fx', v => v + '%');
 bindSlider('sens', v => (v/100).toFixed(2) + 'x');
 bindSlider('edgeW', v => v + '%');
 bindSlider('edgeL', v => v + '%');
+bindSlider('dth', v => (v/100).toFixed(2));
+bindSlider('cburst', v => (v/100).toFixed(2));
+bindSlider('duckFire', v => (v/100).toFixed(2));
+bindSlider('duckWalk', v => (v/100).toFixed(2));
+bindSlider('duckRel', v => v + ' ms');
+bindSlider('duckCone', v => v + '°');
 for (let i = 0; i < 8; i++) bindSlider('w' + i, v => (v/100).toFixed(2));
 
 function setMode(m) { /* mode UI removed: always stereo */ }
@@ -322,6 +361,14 @@ function applyState(s) {
   if (c.sensitivity !== undefined) set('sens', Math.round(c.sensitivity*100));
   if (c.edge_width !== undefined) set('edgeW', c.edge_width);
   if (c.edge_len !== undefined) set('edgeL', c.edge_len);
+  set('dth', Math.round((c.detect_threshold !== undefined ? c.detect_threshold : 0.03)*100));
+  set('cburst', Math.round((c.classify_burst !== undefined ? c.classify_burst : 0.04)*100));
+  $('fmerge').checked = c.front_merge !== undefined ? !!c.front_merge : true;
+  $('duckOn').checked = c.duck_enabled !== undefined ? !!c.duck_enabled : true;
+  set('duckFire', Math.round((c.duck_fire !== undefined ? c.duck_fire : 0.85)*100));
+  set('duckWalk', Math.round((c.duck_walk !== undefined ? c.duck_walk : 0.65)*100));
+  set('duckRel', c.duck_release_ms !== undefined ? c.duck_release_ms : 300);
+  set('duckCone', c.duck_cone_deg !== undefined ? c.duck_cone_deg : 50);
   for (let i = 0; i < 8; i++) set('w' + i, Math.round(c.weights[i]*100));
   const dot = $('dot');
   dot.className = 'dot ' + (s.status.running ? 'ok' : (s.status.error ? 'err' : 'warn'));
@@ -351,6 +398,14 @@ function collectConfig() {
     sensitivity: (+$('sens').value)/100,
     edge_width: +$('edgeW').value,
     edge_len: +$('edgeL').value,
+    detect_threshold: (+$('dth').value)/100,
+    classify_burst: (+$('cburst').value)/100,
+    front_merge: $('fmerge').checked,
+    duck_enabled: $('duckOn').checked,
+    duck_fire: (+$('duckFire').value)/100,
+    duck_walk: (+$('duckWalk').value)/100,
+    duck_release_ms: +$('duckRel').value,
+    duck_cone_deg: +$('duckCone').value,
     weights: [0,1,2,3,4,5,6,7].map(i => (+$('w'+i).value)/100)
   };
 }
@@ -382,9 +437,20 @@ function instantApply() {
         selOut: $('selOut').selectedIndex, config: collectConfig()});
 }
 window.__instantApply = instantApply;
-for (const id of ['ovOn','clsOn','autoOn']) $(id).onchange = instantApply;
+for (const id of ['ovOn','clsOn','autoOn','fmerge','duckOn']) $(id).onchange = instantApply;
 $('selIn').onchange = instantApply;
 $('selOut').onchange = instantApply;
+
+// basic/advanced tabs; re-posting ready re-triggers the host auto-fit
+function showTab(basic) {
+  $('pageBasic').hidden = !basic;
+  $('pageAdv').hidden = basic;
+  $('tabBasic').classList.toggle('on', basic);
+  $('tabAdv').classList.toggle('on', !basic);
+  post({cmd:'ready'});
+}
+$('tabBasic').onclick = () => showTab(true);
+$('tabAdv').onclick = () => showTab(false);
 // frameless window drag (WebView2 does not implement -webkit-app-region itself)
 $('titlebar').addEventListener('mousedown', e => {
   if (e.target.closest('.tbtn')) return;
