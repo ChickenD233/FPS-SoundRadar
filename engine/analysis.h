@@ -48,7 +48,12 @@ struct AnalysisConfig {
     // the quietest block and the mean ambient level.
     int   floorWindowMs  = 1000;
     float noiseOffsetDb  = 6.0f;
-    float gateMarginDb   = 8.0f;   // envelope must exceed floor + margin to open
+    // Envelope must exceed floor + gateMarginDb to open the gate. Lower is more
+    // sensitive. Measured on the host harness at a -45 dBFS ambient floor: 8 dB
+    // detects steps down to -30 dBFS, 4 dB down to -39, 2 dB down to -42, and
+    // 4 dB kept the false-positive count at zero. 4 is the default; the GUI
+    // exposes 2..12 as a trade-off control.
+    float gateMarginDb   = 4.0f;   // envelope must exceed floor + margin to open
     // 20 ms: two blocks. Long enough that an isolated noise block cannot draw,
     // short enough that the classifier still sees the onset of a short step.
     int   gateHoldMs     = 20;     // gate must stay open this long before it counts

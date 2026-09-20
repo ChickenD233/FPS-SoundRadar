@@ -4,8 +4,6 @@
 
 #include <cmath>
 #include <cstring>
-#include <cstdio>
-#include <cstdlib>
 
 namespace sr {
 

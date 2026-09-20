@@ -333,7 +333,7 @@ footer {
 
 <div class="card">
   <h2>检测 DETECTION</h2>
-  <div class="row"><label>检测门限</label><span class="slide"><span class="end lo">低</span><input type="range" id="dth" min="0" max="10" step="0.5"><span class="end hi">高</span></span><span class="val" id="dthV"></span></div>
+  <div class="row"><label>检测门限</label><span class="slide"><span class="end lo">低</span><input type="range" id="dth" min="0" max="10" step="0.5" value="1"><span class="end hi">高</span></span><span class="val" id="dthV"></span></div>
   <div class="hint">显示箭头所需音量：调<b data-p="lo">低</b>更灵敏（可能误报）；调<b data-p="hi">高</b>只显示明确声音</div>
   <div class="row"><label>分类能量门限</label><span class="slide"><span class="end lo">低</span><input type="range" id="cburst" min="1" max="15" step="0.5"><span class="end hi">高</span></span><span class="val" id="cburstV"></span></div>
   <div class="hint">脚步/枪声图标所需能量：调<b data-p="lo">低</b>更容易出现；调<b data-p="hi">高</b>只标明确声音</div>
@@ -397,6 +397,8 @@ footer {
     <input type="number" id="mtCmn" min="2" max="300" step="0.1" placeholder="自动">
     <span class="val" id="mtCmnV" style="visibility:hidden"></span></div>
   <div class="hint">鼠标走多少厘米转一整圈。选上面的游戏时自动算好并填入；选"自己填"时请自己输入（用 [xidaohai](https://xidaohai.github.io/) 等站点查到同一数值）</div>
+  <div class="row"><label>检测灵敏度</label><input type="range" id="mtGate" min="2" max="12" step="0.5" value="4"><span class="val" id="mtGateV"></span></div>
+  <div class="hint">能听到多轻的脚步声。<b data-p="lo">低</b> = 更灵敏（2 最灵敏，可能偶尔误报）；<b data-p="hi">高</b> = 更安静（默认 4）</div>
   <div class="row"><label>灵敏度校正</label><input type="range" id="mtCal" min="50" max="200" step="1"><span class="val" id="mtCalV"></span></div>
   <div class="hint">按上面的数值算出来的转角若和实际不一致，就拖这条：<b data-p="hi">高</b> = 转得更多（视角更灵敏），<b data-p="lo">低</b> = 转得更少。100% 为按公式计算</div>
   <div class="row"><label class="tgl-label">反向</label>
@@ -575,7 +577,7 @@ paintHint(document);
 wireTouch(["fade", "afade", "radius", "posX", "posY", "fx", "low", "high", "sens",
            "edgeW", "edgeL", "dth", "cburst", "duckFire", "duckWalk", "duckRel", "duckCone",
            "w0", "w1", "w2", "w3", "w4", "w5", "w6", "w7",
-           "mtDpi", "mtSens", "mtCmn", "mtGame", "mtCal",
+           "mtDpi", "mtSens", "mtCmn", "mtGame", "mtCal", "mtGate",
            "ovOn", "clsOn", "autoOn", "fmerge", "hideImp", "duckOn", "mtOn", "mtInv"]);
 // Switches apply at once, the same as a slider change. A toggle that needed a
 // separate Apply click is easy to read as "the switch does nothing".
@@ -596,6 +598,7 @@ bindSlider('edgeW', v => v + '%');
 bindSlider('edgeL', v => v + '%');
 bindSlider('dth', v => (v/100).toFixed(2));
 bindSlider('cburst', v => (v/100).toFixed(2));
+bindSlider('mtGate', v => (+v).toFixed(1) + ' dB');
 bindSlider('mtCal', v => v + '%');
 if ($('mtCmn')) $('mtCmn').addEventListener('change', updateMouseReadout);
 if ($('mtDpi')) $('mtDpi').addEventListener('change', updateMouseReadout);
@@ -682,6 +685,7 @@ function applyState(s) {
   if (c.mouse_cm360 !== undefined && $('mtCmn'))
     guardSet('mtCmn', () => { $('mtCmn').value = (+c.mouse_cm360).toFixed(2); });
   if (c.mouse_cal_pct !== undefined && $('mtCal')) set('mtCal', c.mouse_cal_pct);
+  if (c.detect_gate_margin !== undefined && $('mtGate')) set('mtGate', c.detect_gate_margin);
   if (c.mouse_deg_per_count > 0) set('mtCal', c.mouse_deg_per_count); // legacy absolute value
   if (c.mouse_game !== undefined && $('mtGame'))
     guardSet('mtGame', () => { $('mtGame').value = c.mouse_game; });
@@ -692,7 +696,7 @@ function applyState(s) {
   updateMouseReadout();
   if (c.edge_width !== undefined) set('edgeW', c.edge_width);
   if (c.edge_len !== undefined) set('edgeL', c.edge_len);
-  set('dth', Math.round((c.detect_threshold !== undefined ? c.detect_threshold : 0.01)*200)/2);
+  set('dth', Math.round((c.detect_threshold !== undefined ? c.detect_threshold : 0.005)*200)/2);
   set('cburst', Math.round((c.classify_burst !== undefined ? c.classify_burst : 0.005)*200)/2);
   guardSet('fmerge', () => { $('fmerge').checked = c.front_merge !== undefined ? !!c.front_merge : true; });
   guardSet('hideImp', () => { $('hideImp').checked = c.hide_impact !== undefined ? !!c.hide_impact : false; });
@@ -724,6 +728,7 @@ function collectConfig() {
     // slider is applied in the engine, so one formula serves both places.
     mouse_deg_per_count: 0,
     mouse_cal_pct: $('mtCal') ? +$('mtCal').value : 100,
+    detect_gate_margin: $('mtGate') ? +$('mtGate').value : 4,
     mouse_game: selectedGame(),
     mouse_sens: $('mtSens') ? +$('mtSens').value : 0,
     mouse_turn_sign: ($('mtInv') && $('mtInv').checked) ? -1 : 1,
@@ -800,10 +805,10 @@ function onUpdate(u) {
 }
 
 const PRESETS = {
-  default: { name:'默认', sensitivity:2.5, overlay_low:0.08, overlay_high:0.30, detect_threshold:0.01, classify_burst:0.005, classify_low_ratio:2.5, classify_min_crest:2.0, classify_spacing_min_ms:250, classify_spacing_max_ms:700, classify_impact_ms:35, classify_impact_ratio:2.0, classify_impact_crest:1.8, arrow_fade_ms:500, duck_enabled:true, duck_fire:0.85, duck_walk:0.65, duck_release_ms:300, duck_cone_deg:50, front_merge:true, hide_impact:false },
-  cs2:     { name:'CS2', sensitivity:2.5, overlay_low:0.08, overlay_high:0.30, detect_threshold:0.01, classify_burst:0.005, classify_low_ratio:1.5, classify_min_crest:2.0, classify_spacing_min_ms:250, classify_spacing_max_ms:700, classify_impact_ms:35, classify_impact_ratio:2.0, classify_impact_crest:1.8, arrow_fade_ms:500, duck_enabled:true, duck_fire:0.85, duck_walk:0.65, duck_release_ms:300, duck_cone_deg:50, front_merge:true, hide_impact:false },
-  valorant:{ name:'无畏契约', sensitivity:3.0, overlay_low:0.08, overlay_high:0.30, detect_threshold:0.01, classify_burst:0.005, classify_low_ratio:2.0, classify_min_crest:1.8, classify_spacing_min_ms:250, classify_spacing_max_ms:700, classify_impact_ms:35, classify_impact_ratio:2.2, classify_impact_crest:1.8, arrow_fade_ms:500, duck_enabled:true, duck_fire:0.85, duck_walk:0.65, duck_release_ms:300, duck_cone_deg:50, front_merge:true, hide_impact:true },
-  delta:   { name:'三角洲行动', sensitivity:3.0, overlay_low:0.08, overlay_high:0.30, detect_threshold:0.01, classify_burst:0.005, classify_low_ratio:2.0, classify_min_crest:1.8, classify_spacing_min_ms:220, classify_spacing_max_ms:750, classify_impact_ms:35, classify_impact_ratio:2.0, classify_impact_crest:1.8, arrow_fade_ms:600, duck_enabled:true, duck_fire:0.85, duck_walk:0.70, duck_release_ms:350, duck_cone_deg:50, front_merge:true, hide_impact:false }
+  default: { name:'默认', sensitivity:2.5, overlay_low:0.08, overlay_high:0.30, detect_threshold:0.005, classify_burst:0.005, classify_low_ratio:2.5, classify_min_crest:2.0, classify_spacing_min_ms:250, classify_spacing_max_ms:700, classify_impact_ms:35, classify_impact_ratio:2.0, classify_impact_crest:1.8, arrow_fade_ms:500, duck_enabled:true, duck_fire:0.85, duck_walk:0.65, duck_release_ms:300, duck_cone_deg:50, front_merge:true, hide_impact:false },
+  cs2:     { name:'CS2', sensitivity:2.5, overlay_low:0.08, overlay_high:0.30, detect_threshold:0.005, classify_burst:0.005, classify_low_ratio:1.5, classify_min_crest:2.0, classify_spacing_min_ms:250, classify_spacing_max_ms:700, classify_impact_ms:35, classify_impact_ratio:2.0, classify_impact_crest:1.8, arrow_fade_ms:500, duck_enabled:true, duck_fire:0.85, duck_walk:0.65, duck_release_ms:300, duck_cone_deg:50, front_merge:true, hide_impact:false },
+  valorant:{ name:'无畏契约', sensitivity:3.0, overlay_low:0.08, overlay_high:0.30, detect_threshold:0.005, classify_burst:0.005, classify_low_ratio:2.0, classify_min_crest:1.8, classify_spacing_min_ms:250, classify_spacing_max_ms:700, classify_impact_ms:35, classify_impact_ratio:2.2, classify_impact_crest:1.8, arrow_fade_ms:500, duck_enabled:true, duck_fire:0.85, duck_walk:0.65, duck_release_ms:300, duck_cone_deg:50, front_merge:true, hide_impact:true },
+  delta:   { name:'三角洲行动', sensitivity:3.0, overlay_low:0.08, overlay_high:0.30, detect_threshold:0.005, classify_burst:0.005, classify_low_ratio:2.0, classify_min_crest:1.8, classify_spacing_min_ms:220, classify_spacing_max_ms:750, classify_impact_ms:35, classify_impact_ratio:2.0, classify_impact_crest:1.8, arrow_fade_ms:600, duck_enabled:true, duck_fire:0.85, duck_walk:0.70, duck_release_ms:350, duck_cone_deg:50, front_merge:true, hide_impact:false }
 };
 // load: set the controls that exist, then post apply with the control-less
 // classify_* keys merged in (collectConfig alone would drop them)

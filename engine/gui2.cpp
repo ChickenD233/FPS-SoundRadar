@@ -454,6 +454,7 @@ void Gui::PushState() {
     j += ",\"config\":{";
     j += std::string("\"mode\":\"") + DownmixModeName(cfg.downmix.mode) + "\"";
     addNum("fade_ms", cfg.analysis.fadeMs);
+    addNum("detect_gate_margin", cfg.analysis.gateMarginDb);
     addNum("radar_radius", cfg.overlay.radius);
     addNum("overlay_low", cfg.overlay.lowThreshold);
     addNum("overlay_high", cfg.overlay.highThreshold);
@@ -690,6 +691,10 @@ void Gui::ApplyFromJson(const std::string& cj, int selIn, int selOut) {
     JBool(cj, "classify_enabled", cfg.classifyEnabled);
     double d;
     if (JNum(cj, "fade_ms", d)) cfg.analysis.fadeMs = static_cast<int>(d);
+    if (JNum(cj, "detect_gate_margin", d))
+        cfg.analysis.gateMarginDb = static_cast<float>(d);
+    if (cfg.analysis.gateMarginDb < 1.0f) cfg.analysis.gateMarginDb = 1.0f;
+    if (cfg.analysis.gateMarginDb > 20.0f) cfg.analysis.gateMarginDb = 20.0f;
     if (JNum(cj, "radar_radius", d)) cfg.overlay.radius = static_cast<int>(d);
     if (JNum(cj, "overlay_low", d)) cfg.overlay.lowThreshold = static_cast<float>(d);
     if (JNum(cj, "overlay_high", d)) cfg.overlay.highThreshold = static_cast<float>(d);

@@ -13,7 +13,7 @@ namespace sr {
 
 // config file schema version; bump when retuned defaults must overwrite the
 // values old builds persisted (see the migration at the end of LoadConfig).
-constexpr int kConfigVersion = 5;
+constexpr int kConfigVersion = 6;
 
 std::wstring DefaultConfigPath() {
     wchar_t buf[MAX_PATH] = {};
@@ -130,6 +130,11 @@ bool LoadConfig(const std::wstring& path, AppConfig& cfg) {
     double d;
     bool b = false;
     if (GetNumber(json, "fade_ms", d)) cfg.analysis.fadeMs = static_cast<int>(d);
+    // detection gate margin: lower = more sensitive
+    if (GetNumber(json, "detect_gate_margin", d))
+        cfg.analysis.gateMarginDb = static_cast<float>(d);
+    if (cfg.analysis.gateMarginDb < 1.0f) cfg.analysis.gateMarginDb = 1.0f;
+    if (cfg.analysis.gateMarginDb > 20.0f) cfg.analysis.gateMarginDb = 20.0f;
     if (GetNumber(json, "activity_threshold", d)) cfg.analysis.activityThreshold = static_cast<float>(d);
     if (GetNumber(json, "peak_threshold", d)) cfg.analysis.peakThreshold = static_cast<float>(d);
     if (GetNumber(json, "attack_ms", d)) cfg.analysis.attackMs = static_cast<float>(d);
@@ -205,6 +210,14 @@ bool LoadConfig(const std::wstring& path, AppConfig& cfg) {
     // migration v5: the two one-ear modes became one mono mode. The old names
     // already parse to DownmixMono, and a mode of 0 is the old right-mono value.
     if (ver < 5 && cfg.downmix.mode == DownmixRightMono) cfg.downmix.mode = DownmixMono;
+    // migration v6: adaptive sensitivity retune. The gate margin dropped from
+    // 8 to 4 dB (measured: detects steps 6-9 dB quieter with no false
+    // positives), and the display threshold dropped so those quieter steps are
+    // actually drawn.
+    if (ver < 6) {
+        if (cfg.analysis.gateMarginDb > 6.0f) cfg.analysis.gateMarginDb = 4.0f;
+        if (cfg.overlay.detectThreshold > 0.005f) cfg.overlay.detectThreshold = 0.005f;
+    }
     return true;
 }
 
@@ -230,6 +243,7 @@ bool SaveConfig(const std::wstring& path, const AppConfig& cfg) {
     f << "  \"attack_ms\": " << cfg.analysis.attackMs << ",\n";
     f << "  \"release_ms\": " << cfg.analysis.releaseMs << ",\n";
     f << "  \"fade_ms\": " << cfg.analysis.fadeMs << ",\n";
+    f << "  \"detect_gate_margin\": " << cfg.analysis.gateMarginDb << ",\n";
     f << "  \"activity_threshold\": " << cfg.analysis.activityThreshold << ",\n";
     f << "  \"peak_threshold\": " << cfg.analysis.peakThreshold << ",\n";
     f << "  \"output_device\": \"" << WideToUtf8(cfg.outputDevice) << "\",\n";
