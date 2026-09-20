@@ -476,6 +476,8 @@ void Gui::PushState() {
     addNum("mouse_deg_per_count", cfg.overlay.mouseDegPerCount);
     addNum("mouse_turn_sign", cfg.overlay.mouseTurnSign);
     addNum("mouse_cal_pct", cfg.overlay.mouseCalPct);
+    j += ",\"mouse_game\":\""; j += cfg.overlay.mouseGame; j += "\"";
+    addNum("mouse_sens", cfg.overlay.mouseSens);
     j += ",\"front_merge\":"; j += cfg.overlay.frontMerge ? "true" : "false";
     j += ",\"hide_impact\":"; j += cfg.overlay.hideImpact ? "true" : "false";
     j += ",\"duck_enabled\":"; j += cfg.overlay.duckEnabled ? "true" : "false";

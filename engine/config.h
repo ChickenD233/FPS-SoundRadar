@@ -43,6 +43,8 @@ struct OverlayConfig {
     double mouseDegPerCount = 0.0; // hand measure; 0 = compute from cm360+DPI
     double mouseTurnSign = 1.0;    // 1 or -1, inverts the rotation direction
     double mouseCalPct = 100.0;    // correction in percent on the computed value
+    std::string mouseGame = "cs2"; // which game the sensitivity figure came from
+    double mouseSens = 0.0;        // the in-game sensitivity the user typed
 };
 
 struct AppConfig {

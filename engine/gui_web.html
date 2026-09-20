@@ -89,10 +89,11 @@ body {
    word keeps one color: 低 fluorescent blue, 高 amber. The same colors paint
    the slider track and its two end labels. */
 :root {
-  --lo: #35d0ff;
-  --lo-dim: rgba(53, 208, 255, .4);
-  --hi: #ff9d2e;
-  --hi-dim: rgba(255, 157, 46, .4);
+  --lo: #57c8e8;
+  --lo-dim: rgba(87, 200, 232, .38);
+  --hi: #eda85c;
+  --hi-dim: rgba(237, 168, 92, .38);
+  --track-mid: #6f7a8c;
 }
 .hint b { font-weight: 600; font-size: inherit; }
 .hint b.lo { color: var(--lo); }
@@ -120,6 +121,14 @@ select {
 }
 select:focus { border-color: var(--accent); }
 
+/* numeric field: same shell as a select, so it does not collapse */
+input[type=number], input[type=text] {
+  flex: 1; min-width: 0; background: var(--card2); color: var(--text);
+  border: 1px solid rgba(255,255,255,.08); border-radius: 8px;
+  padding: 6px 10px; font-family: inherit; font-size: 12.5px; outline: none;
+}
+input[type=number]:focus, input[type=text]:focus { border-color: var(--accent); }
+
 /* segmented control */
 .seg { display: flex; background: var(--card2); border-radius: 9px; padding: 3px; gap: 3px; }
 .seg button {
@@ -134,10 +143,17 @@ select:focus { border-color: var(--accent); }
 
 /* toggle pill */
 .tgl { position: relative; width: 38px; height: 20px; flex: none; cursor: pointer; }
-.tgl input { opacity: 0; width: 0; height: 0; }
+/* The checkbox itself carries the hit area. With width/height 0 the click
+   target depended on the label wrapping, which is not reliable in every
+   WebView2 build. */
+.tgl input {
+  position: absolute; inset: 0; width: 100%; height: 100%;
+  opacity: 0; margin: 0; padding: 0; cursor: pointer; z-index: 2;
+}
 .tgl .tr {
   position: absolute; inset: 0; border-radius: 20px; background: var(--card2);
   border: 1px solid rgba(255,255,255,.1); transition: all .18s ease;
+  pointer-events: none;
 }
 .tgl .tr::after {
   content: ""; position: absolute; left: 2px; top: 2px; width: 14px; height: 14px;
@@ -356,11 +372,27 @@ footer {
   </div>
   <div class="hint">开启后，随着你鼠标左右转动视角，声纹也跟着反向转动，指向"相对当前视角"的方向。
     适合抵消声音延迟。数值不对就先填 DPI 与 cm/360，再用下面两条校正。</div>
-  <div class="row"><label>鼠标 DPI</label><input type="number" id="mtDpi" min="100" max="32000" step="50" style="flex:1;min-width:0;background:var(--card2);color:var(--text);border:1px solid rgba(255,255,255,.08);border-radius:8px;padding:6px 10px;font-family:inherit;font-size:12.5px"><span class="val" id="mtDpiV" style="visibility:hidden"></span></div>
-  <div class="hint">鼠标驱动软件里设置的 DPI（不是你游戏内的灵敏度）</div>
+  <div class="row"><label>游戏</label>
+    <select id="mtGame">
+      <option value="cs2">CS2 / CS:GO（yaw 0.022）</option>
+      <option value="valorant">无畏契约 Valorant（yaw 0.070）</option>
+      <option value="apex">Apex 英雄（yaw 0.022）</option>
+      <option value="ow2">守望先锋 2（yaw 0.0066）</option>
+      <option value="custom">三角洲行动 / 其他（自己填 cm/360）</option>
+    </select></div>
+    <div class="hint">选游戏后填 DPI 和<b>游戏内灵敏度</b>，下面直接算。核对方法：在游戏里正好转一整圈（360°），
+    量一下鼠标在垫子上走了多少厘米；和括号里的数字差多少，就用"灵敏度校正"补多少</div>
+  <div class="row"><label>鼠标 DPI</label>
+    <input type="number" id="mtDpi" min="100" max="32000" step="50" placeholder="800">
+    <span class="val" id="mtDpiV" style="visibility:hidden"></span></div>
+  <div class="row" id="mtSensRow"><label>游戏内灵敏度</label>
+    <input type="number" id="mtSens" min="0.01" max="100" step="0.01" placeholder="1.00">
+    <span class="val" id="mtSensV" style="visibility:hidden"></span></div>
   <div class="hint" id="mtRead" style="color:var(--accent)"></div>
-  <div class="row"><label>cm / 360°</label><input type="range" id="mtCm" min="5" max="120" step="0.5"><span class="val" id="mtCmV"></span></div>
-  <div class="hint">鼠标在垫子上走多少厘米转一整圈 360°。用 xidaohai 等站点的换算工具，按你当前游戏灵敏度算出这个值</div>
+  <div class="row"><label>cm / 360°</label>
+    <input type="number" id="mtCmn" min="2" max="300" step="0.1" placeholder="自动">
+    <span class="val" id="mtCmnV" style="visibility:hidden"></span></div>
+  <div class="hint">鼠标走多少厘米转一整圈。选上面的游戏时自动算好并填入；选"自己填"时请自己输入（用 [xidaohai](https://xidaohai.github.io/) 等站点查到同一数值）</div>
   <div class="row"><label>灵敏度校正</label><input type="range" id="mtCal" min="50" max="200" step="1"><span class="val" id="mtCalV"></span></div>
   <div class="hint">按上面的数值算出来的转角若和实际不一致，就拖这条：<b data-p="hi">高</b> = 转得更多（视角更灵敏），<b data-p="lo">低</b> = 转得更少。100% 为按公式计算</div>
   <div class="row"><label class="tgl-label">反向</label>
@@ -424,31 +456,83 @@ function setFill(el) {
    high end (amber). okLCH keeps the ramp even; a plain HSL mix is the fallback
    on a WebView2 build without oklch support. */
 const LO_HUE = 230, HI_HUE = 55;
+// Colour for a slider position. The ends keep their identity colour; the middle
+// stays neutral, so the track looks like one control instead of a rainbow.
 function mkMap(loHue, hiHue) {
   const ok = window.CSS && CSS.supports && CSS.supports('color', 'oklch(0.5 0.1 200)');
   return t => {
     const h = loHue + (hiHue - loHue) * t;
+    const e = Math.abs(t - 0.5) * 2; // 1 at an end, 0 in the middle
     if (ok) {
-      const L = 0.72 + 0.10 * t, C = 0.15 + 0.06 * t;
+      const L = 0.76 + 0.03 * (1 - e), C = 0.02 + 0.09 * e;
       return { css: `oklch(${L.toFixed(3)} ${C.toFixed(3)} ${h.toFixed(1)})`,
-               glow: `oklch(${L.toFixed(3)} ${C.toFixed(3)} ${h.toFixed(1)} / .4)` };
+               glow: `oklch(${L.toFixed(3)} ${C.toFixed(3)} ${h.toFixed(1)} / .35)` };
     }
-    return { css: `hsl(${h.toFixed(1)} 100% ${(58 + 6 * t).toFixed(1)}%)`,
-             glow: `hsla(${h.toFixed(1)}, 100%, 62%, .4)` };
+    return { css: `hsl(${h.toFixed(1)} ${(20 + 55 * e).toFixed(0)}% ${(62 + 6 * e).toFixed(0)}%)`,
+             glow: `hsla(${h.toFixed(1)}, 70%, 66%, .35)` };
   };
 }
-// Shows the two numbers the feature works from, so a wrong value is visible.
+// Game yaw (m_yaw): degrees of view rotation for one mouse count at
+// sensitivity 1.0. CS2, CS:GO and the other Source games use 0.022; Apex shares
+// it; Valorant uses 0.07; Overwatch 2 and Call of Duty use 0.0066. These are the
+// same constants the cross-game converters publish, and they also give the
+// cross-game ratio those sites quote (Valorant = CS2 * 0.07 / 0.022 = 3.18).
+//
+// The overlay needs the angle per count, which is  sens * yaw  degrees.
+// The same numbers also give the physical travel:
+//     cm/360 = (360 * 2.54) / (DPI * sens * yaw * 2.54) * 2.54 ...
+// Publishers disagree by a factor of two on that last step, so this panel does
+// not print cm/360 as a fact. It prints the angle that the overlay actually
+// uses, plus a check the field can settle: turn exactly 360 degrees in the game
+// and mark the mouse travel. If the mark does not match the hand-measured
+// distance, use the correction slider or type your measured cm/360.
+const MOUSE_YAW = { cs2: 0.022, apex: 0.022, valorant: 0.07, ow2: 0.0066 };
+
+// Sets a slider from code and refreshes its display. applyState has its own
+// local helper; code outside it must not reach for that one.
+function setSlider(id, v) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.value = v;
+  if (el._show) el._show();
+}
+
+function selectedGame() {
+  const el = $("mtGame");
+  return el ? el.value : "custom";
+}
 function updateMouseReadout() {
   const el = document.getElementById("mtRead");
   if (!el) return;
+  const game = selectedGame();
   const dpi = $("mtDpi") ? +$("mtDpi").value : 0;
-  const cm = $("mtCm") ? +$("mtCm").value : 0;
   const cal = $("mtCal") ? +$("mtCal").value / 100 : 1;
+  const isCustom = (game === "custom");
+  const sensRow = document.getElementById("mtSensRow");
+  if (sensRow) sensRow.style.display = isCustom ? "none" : "";
+
+  if (!isCustom) {
+    const sens = $("mtSens") ? +$("mtSens").value : 0;
+    if (dpi > 1 && sens > 0) {
+      const yaw = MOUSE_YAW[game];
+      const degPerCount = sens * yaw * cal;       // what the overlay applies
+      const countsPerTurn = 360 / degPerCount;
+      const cmPer360 = (countsPerTurn / dpi) * 2.54;
+      const cmf = $("mtCmn");
+      if (cmf && document.activeElement !== cmf) cmf.value = cmPer360.toFixed(2);
+      el.innerHTML = `每计数转 <b>${degPerCount.toFixed(5)}°</b>` +
+                     `（转一整圈 ${Math.round(countsPerTurn)} 个计数 ≈ <b>${cmPer360.toFixed(1)} cm</b>）` +
+                     `；校正 ${Math.round(cal * 100)}%`;
+      return;
+    }
+    el.textContent = "填入 DPI 与游戏内灵敏度后显示换算结果";
+    return;
+  }
+  const cm = $("mtCmn") ? +$("mtCmn").value : 0;
   if (dpi <= 1 || cm <= 1) { el.textContent = "填入 DPI 与 cm/360 后显示换算结果"; return; }
   const perTurn = (cm / 2.54) * dpi;
-  const deg = 360 / perTurn;
   el.innerHTML = `换算结果：每 360° 需要 <b>${Math.round(perTurn)}</b> 个鼠标计数；` +
-                 `每计数 <b>${(deg * cal).toFixed(4)}°</b>（校正 ${Math.round(cal * 100)}%）`;
+                 `每计数 <b>${((360 / perTurn) * cal).toFixed(5)}°</b>（校正 ${Math.round(cal * 100)}%）`;
 }
 
 function paintHint(root) {
@@ -459,14 +543,12 @@ function paintHint(root) {
 function drawScale(el, map, pos) {
   const t = (el.value - el.min) / (el.max - el.min);
   const c = map(t);
-  const stops = [];
-  for (let i = 0; i < 17; i++) {
-    const u = i / 16, cc = map(u);
-    // dim everything left of the thumb only when --fill is used; here the whole
-    // ramp stays visible so the two ends keep their colours
-    stops.push(`${cc.css} ${(u * 100).toFixed(0)}%`);
-  }
-  el.style.background = `linear-gradient(90deg, ${stops.join(', ')})`;
+  // Two muted end colours with a neutral middle. A full low->high hue sweep
+  // read as a rainbow; a calm band reads as one control with two ends.
+  const mid = getComputedStyle(document.documentElement)
+                .getPropertyValue("--track-mid").trim() || "#6f7a8c";
+  el.style.background =
+    `linear-gradient(90deg, ${map(0).css} 0%, ${mid} 50%, ${map(1).css} 100%)`;
   el.style.setProperty('--thumb', c.css);
   el.style.setProperty('--thumb-dim', c.glow);
   void pos;
@@ -486,6 +568,12 @@ function bindSlider(id, fmt) {
   show();
 }
 paintHint(document);
+// Switches apply at once, the same as a slider change. A toggle that needed a
+// separate Apply click is easy to read as "the switch does nothing".
+for (const id of ["mtOn", "mtInv", "ovOn", "clsOn", "autoOn", "fmerge", "hideImp", "duckOn"]) {
+  const el = document.getElementById(id);
+  if (el) el.addEventListener("change", () => { if (window.__instantApply) window.__instantApply(); });
+}
 bindSlider('fade', v => v + ' ms');
 bindSlider('afade', v => v + ' ms');
 bindSlider('radius', v => v + ' px');
@@ -499,9 +587,11 @@ bindSlider('edgeW', v => v + '%');
 bindSlider('edgeL', v => v + '%');
 bindSlider('dth', v => (v/100).toFixed(2));
 bindSlider('cburst', v => (v/100).toFixed(2));
-bindSlider('mtCm', v => { updateMouseReadout(); return (+v).toFixed(1) + ' cm'; });
-bindSlider('mtCal', v => { updateMouseReadout(); return v + '%'; });
-if ($('mtDpi')) $('mtDpi').addEventListener('input', updateMouseReadout);
+bindSlider('mtCal', v => v + '%');
+if ($('mtCmn')) $('mtCmn').addEventListener('change', updateMouseReadout);
+if ($('mtDpi')) $('mtDpi').addEventListener('change', updateMouseReadout);
+if ($('mtSens')) $('mtSens').addEventListener('change', updateMouseReadout);
+if ($('mtGame')) $('mtGame').addEventListener('change', updateMouseReadout);
 bindSlider('duckFire', v => (v/100).toFixed(2));
 bindSlider('duckWalk', v => (v/100).toFixed(2));
 bindSlider('duckRel', v => v + ' ms');
@@ -543,8 +633,13 @@ function applyState(s) {
   if (c.sensitivity !== undefined) set('sens', Math.round(c.sensitivity*100));
   if (c.mouse_turn !== undefined && $('mtOn')) $('mtOn').checked = !!c.mouse_turn;
   if (c.mouse_dpi !== undefined && $('mtDpi')) $('mtDpi').value = Math.round(c.mouse_dpi);
-  if (c.mouse_cm360 !== undefined && $('mtCm')) set('mtCm', c.mouse_cm360);
+  if (c.mouse_cm360 !== undefined && $('mtCmn') && document.activeElement !== $('mtCmn'))
+    $('mtCmn').value = (+c.mouse_cm360).toFixed(2);
   if (c.mouse_cal_pct !== undefined && $('mtCal')) set('mtCal', c.mouse_cal_pct);
+  if (c.mouse_deg_per_count > 0) set('mtCal', c.mouse_deg_per_count); // legacy absolute value
+  if (c.mouse_game !== undefined && $('mtGame')) $('mtGame').value = c.mouse_game;
+  if (c.mouse_sens !== undefined && $('mtSens') && document.activeElement !== $('mtSens'))
+    $('mtSens').value = c.mouse_sens;
   if (c.mouse_turn_sign !== undefined && $('mtInv')) $('mtInv').checked = (c.mouse_turn_sign < 0);
   updateMouseReadout();
   if (c.edge_width !== undefined) set('edgeW', c.edge_width);
@@ -576,11 +671,13 @@ function collectConfig() {
     mode: $('selMode') ? $('selMode').value : 'stereo',
     mouse_turn: $('mtOn') ? $('mtOn').checked : false,
     mouse_dpi: $('mtDpi') ? +$('mtDpi').value : 800,
-    mouse_cm360: $('mtCm') ? +$('mtCm').value : 30,
+    mouse_cm360: $('mtCmn') ? +$('mtCmn').value : 30,
     // 0 = the engine computes deg/count from DPI and cm/360. The correction
     // slider is applied in the engine, so one formula serves both places.
     mouse_deg_per_count: 0,
     mouse_cal_pct: $('mtCal') ? +$('mtCal').value : 100,
+    mouse_game: selectedGame(),
+    mouse_sens: $('mtSens') ? +$('mtSens').value : 0,
     mouse_turn_sign: ($('mtInv') && $('mtInv').checked) ? -1 : 1,
     overlay_enabled: $('ovOn').checked,
     classify_enabled: $('clsOn').checked,

@@ -166,6 +166,8 @@ bool LoadConfig(const std::wstring& path, AppConfig& cfg) {
     if (GetNumber(json, "mouse_deg_per_count", d)) cfg.overlay.mouseDegPerCount = d;
     if (GetNumber(json, "mouse_turn_sign", d)) cfg.overlay.mouseTurnSign = d;
     if (GetNumber(json, "mouse_cal_pct", d)) cfg.overlay.mouseCalPct = d;
+    if (GetString(json, "mouse_game", s)) cfg.overlay.mouseGame = s;
+    if (GetNumber(json, "mouse_sens", d)) cfg.overlay.mouseSens = d;
     GetBool(json, "classify_enabled", cfg.classifyEnabled);
     if (GetNumber(json, "classify_burst", d)) cfg.classify.burstThreshold = static_cast<float>(d);
     if (GetNumber(json, "classify_low_ratio", d)) cfg.classify.lowDominantRatio = static_cast<float>(d);
@@ -257,6 +259,8 @@ bool SaveConfig(const std::wstring& path, const AppConfig& cfg) {
     f << "  \"mouse_deg_per_count\": " << cfg.overlay.mouseDegPerCount << ",\n";
     f << "  \"mouse_turn_sign\": " << cfg.overlay.mouseTurnSign << ",\n";
     f << "  \"mouse_cal_pct\": " << cfg.overlay.mouseCalPct << ",\n";
+    f << "  \"mouse_game\": \"" << cfg.overlay.mouseGame << "\",\n";
+    f << "  \"mouse_sens\": " << cfg.overlay.mouseSens << ",\n";
     f << "  \"classify_enabled\": " << (cfg.classifyEnabled ? "true" : "false") << ",\n";
     f << "  \"classify_burst\": " << cfg.classify.burstThreshold << ",\n";
     f << "  \"classify_low_ratio\": " << cfg.classify.lowDominantRatio << ",\n";
