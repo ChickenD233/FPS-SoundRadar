@@ -14,6 +14,8 @@
 // never composed); headless tests pass visible=false and Present DO_NOT_WAIT.
 #include "overlay.h"
 
+#include "arrow_tracker.h" // ArrowTracker, angle helpers (host-testable)
+
 #include "../engine/log.h"          // sr::Log
 #include "../engine/wasapi_util.h" // ComInit
 
@@ -44,232 +46,9 @@ using Microsoft::WRL::ComPtr;
 namespace {
 
 constexpr float kPi = 3.14159265358979f;
-
-// Channel order: FL FR C LFE BL BR SL SR. Angle: 0 deg = up/front, clockwise
-// positive; LFE has no direction (it brightens the ring instead).
-constexpr float kAngleDeg[8] = { -30.f, 30.f, 0.f, -999.f, -135.f, 135.f, -90.f, 90.f };
 constexpr wchar_t kLabel[8][4] = { L"FL", L"FR", L"C", L"LFE", L"BL", L"BR", L"SL", L"SR" };
 
-// ring order sorted by angle (circular adjacency): BL SL FL C FR SR BR
-constexpr int kRingCh[7] = { 4, 6, 0, 2, 1, 7, 5 };
-constexpr float kRingAng[7] = { -135.f, -90.f, -30.f, 0.f, 30.f, 90.f, 135.f };
-
-// shortest-path angular difference a-b, in -180..180
-float AngDist(float a, float b) {
-    float d = std::fmod(a - b + 540.0f, 360.0f) - 180.0f;
-    return d;
-}
-
-float NormAngle(float a) {
-    a = std::fmod(a + 540.0f, 360.0f);
-    return a - 180.0f;
-}
-
-// directional channel whose angle is closest to `angleDeg` (LFE excluded)
-int NearestChannel(float angleDeg) {
-    int best = -1;
-    float bestD = 1e9f;
-    for (int c = 0; c < 8; ++c) {
-        if (c == 3) continue; // LFE has no angle
-        float d = std::fabs(AngDist(angleDeg, kAngleDeg[c]));
-        if (d < bestD) { bestD = d; best = c; }
-    }
-    return best;
-}
-
-// --- direction estimation: peak cluster centroid + cross-frame tracking ----
-
-class ArrowTracker {
-public:
-    struct Arrow {
-        float angle = 0;    // smoothed display angle, degrees
-        float strength = 0; // smoothed energy
-        float pulse = 0;    // onset ripple 0..1 (0 = none), ~150 ms
-        float age = 0;      // seconds since spawn (scale-in pop)
-        float trail0 = 0, trail1 = 0; // recent older angles (comet trail)
-        float missMs = 0;   // ms since last matched (fade hold + decay)
-        bool matched = false;
-    };
-
-    // minLevel: display threshold; dt: seconds since last call.
-    // frontMerge: fuse peaks closer than 60 deg into one dead-ahead arrow.
-    // arrowFadeMs: unmatched arrows hold 150 ms, then fade out over ~arrowFadeMs.
-    void Update(const float levels[8], float minLevel, float dt, bool frontMerge, int arrowFadeMs) {
-        // 1) candidate peaks: level ~>= both ring neighbors (15% tolerance so a
-        //    diffuse quiet step spread over adjacent channels still spawns)
-        bool cand[7];
-        for (int i = 0; i < 7; ++i) {
-            float l = levels[kRingCh[i]];
-            float lp = levels[kRingCh[(i + 6) % 7]];
-            float ln = levels[kRingCh[(i + 1) % 7]];
-            cand[i] = l > minLevel && l >= lp * 0.85f && l >= ln * 0.85f;
-        }
-        // 2) maximal circular runs of adjacent candidates -> one peak each,
-        //    centroid = energy-weighted circular mean over run +/- 1 neighbor
-        struct Peak { float angle, energy; };
-        Peak peaks[4];
-        int nPeaks = 0;
-        int start = -1;
-        for (int i = 0; i < 7; ++i)
-            if (!cand[i] && cand[(i + 1) % 7]) { start = (i + 1) % 7; break; }
-        if (start >= 0) {
-            int i = start;
-            do {
-                if (!cand[i]) { i = (i + 1) % 7; continue; }
-                int a = i, b = i;
-                while (cand[(b + 1) % 7] && (b + 1) % 7 != start) b = (b + 1) % 7;
-                if (a == b && cand[(b + 1) % 7]) break; // all 7: no direction
-                double sx = 0, sy = 0;
-                float emax = 0;
-                for (int j = (a + 6) % 7;; j = (j + 1) % 7) {
-                    float lv = levels[kRingCh[j]];
-                    // run +/- 1 neighbor: noise below minLevel gets no vote
-                    bool edge = (j == (a + 6) % 7 || j == (b + 1) % 7);
-                    float w = (edge && lv < minLevel) ? 0.0f : std::sqrt(lv);
-                    float rad = kRingAng[j] * kPi / 180.0f;
-                    sx += w * std::sin(rad);
-                    sy += w * std::cos(rad);
-                    if (lv > emax) emax = lv;
-                    if (j == (b + 1) % 7) break;
-                }
-                if (nPeaks < 4 && (sx * sx + sy * sy) > 1e-6) {
-                    peaks[nPeaks].angle = NormAngle(
-                        static_cast<float>(std::atan2(sx, sy)) * 180.0f / kPi);
-                    peaks[nPeaks].energy = emax;
-                    ++nPeaks;
-                }
-                i = (b + 1) % 7;
-            } while (i != start && nPeaks < 4);
-        }
-
-        // frontal merge: fuse any two peaks closer than 60 deg into one
-        // energy-weighted circular mean (FL+FR dead-ahead -> a single ~0 deg
-        // arrow); genuinely separate sources sit >= 90 deg apart and survive
-        if (frontMerge) {
-            bool merged = true;
-            while (merged && nPeaks > 1) {
-                merged = false;
-                for (int a = 0; a < nPeaks && !merged; ++a) {
-                    for (int b = a + 1; b < nPeaks; ++b) {
-                        if (std::fabs(AngDist(peaks[a].angle, peaks[b].angle)) >= 60.0f)
-                            continue;
-                        double ra = peaks[a].angle * kPi / 180.0;
-                        double rb = peaks[b].angle * kPi / 180.0;
-                        double sx = peaks[a].energy * std::sin(ra) +
-                                    peaks[b].energy * std::sin(rb);
-                        double sy = peaks[a].energy * std::cos(ra) +
-                                    peaks[b].energy * std::cos(rb);
-                        peaks[a].angle = NormAngle(
-                            static_cast<float>(std::atan2(sx, sy)) * 180.0f / kPi);
-                        if (peaks[b].energy > peaks[a].energy)
-                            peaks[a].energy = peaks[b].energy;
-                        peaks[b] = peaks[--nPeaks];
-                        merged = true;
-                        break;
-                    }
-                }
-            }
-        }
-
-        // 3) match peaks to existing arrows (< 60 deg), else spawn
-        float smoothA = 1.0f - std::exp(-dt / 0.08f); // 80 ms glide
-        for (auto& ar : arrows_) ar.matched = false;
-        for (int p = 0; p < nPeaks; ++p) {
-            int best = -1;
-            float bestD = 60.0f;
-            for (size_t k = 0; k < arrows_.size(); ++k) {
-                if (arrows_[k].matched) continue;
-                float d = std::fabs(AngDist(peaks[p].angle, arrows_[k].angle));
-                if (d < bestD) { bestD = d; best = static_cast<int>(k); }
-            }
-            if (best >= 0) {
-                Arrow& ar = arrows_[best];
-                ar.matched = true;
-                ar.trail1 = ar.trail0;
-                ar.trail0 = ar.angle;
-                ar.angle = NormAngle(ar.angle + AngDist(peaks[p].angle, ar.angle) * smoothA);
-                ar.strength += (peaks[p].energy - ar.strength) * smoothA;
-                if (ar.pulse > 0.0f) {
-                    ar.pulse += dt / 0.15f; // ~150 ms onset ripple
-                    if (ar.pulse >= 1.0f) ar.pulse = 0.0f;
-                }
-            } else {
-                Arrow ar;
-                ar.angle = ar.trail0 = ar.trail1 = peaks[p].angle;
-                ar.strength = peaks[p].energy;
-                ar.pulse = 0.001f; // onset ripple
-                ar.matched = true;
-                arrows_.push_back(ar);
-            }
-        }
-        // unmatched arrows hold then fade out; all arrows age (scale-in pop)
-        FadeArrows(dt, arrowFadeMs, true);
-    }
-
-    const std::vector<Arrow>& Arrows() const { return arrows_; }
-
-    // Stereo input (srcChannels == 2): one indicator sweeping the front.
-    // pan = (R-L)/(L+R) -> angle = pan * 90 deg, smoothed like the clusters.
-    void UpdateStereo(float lvlL, float lvlR, float dt, int arrowFadeMs) {
-        float smoothA = 1.0f - std::exp(-dt / 0.08f); // 80 ms glide
-        float sum = lvlL + lvlR;
-        if (sum < 0.05f) { // fade out
-            FadeArrows(dt, arrowFadeMs, false);
-            return;
-        }
-        float pan = (lvlR - lvlL) / sum; // -1..+1
-        float target = pan * 90.0f;
-        float energy = sum * 0.5f;
-        if (arrows_.empty()) {
-            Arrow a;
-            a.angle = a.trail0 = a.trail1 = target;
-            a.strength = energy;
-            a.pulse = 0.001f;
-            a.matched = true;
-            arrows_.push_back(a);
-            return;
-        }
-        if (arrows_.size() > 1) arrows_.resize(1); // stereo = one indicator
-        Arrow& ar = arrows_[0];
-        ar.matched = true;
-        ar.missMs = 0.0f;
-        ar.trail1 = ar.trail0;
-        ar.trail0 = ar.angle;
-        ar.age += dt;
-        ar.angle += ShortestDelta(target, ar.angle) * smoothA;
-        ar.strength += (energy - ar.strength) * smoothA;
-        if (ar.pulse > 0.0f) {
-            ar.pulse += dt / 0.15f;
-            if (ar.pulse >= 1.0f) ar.pulse = 0.0f;
-        }
-    }
-
-    static float ShortestDelta(float a, float b) { // a-b in -180..180
-        return std::fmod(a - b + 540.0f, 360.0f) - 180.0f;
-    }
-
-private:
-    // fading arrows hold full strength for 150 ms, then decay exponentially
-    // with tau = arrowFadeMs/3 (gone ~arrowFadeMs after the hold ends)
-    void FadeArrows(float dt, int arrowFadeMs, bool unmatchedOnly) {
-        float tau = (arrowFadeMs > 0 ? arrowFadeMs : 500) / 3000.0f;
-        for (size_t k = 0; k < arrows_.size();) {
-            Arrow& ar = arrows_[k];
-            ar.age += dt;
-            if (unmatchedOnly && ar.matched) { ar.missMs = 0.0f; ++k; continue; }
-            ar.missMs += dt * 1000.0f;
-            if (ar.missMs > 150.0f)
-                ar.strength *= std::exp(-dt / tau);
-            if (ar.strength < 0.02f) {
-                arrows_.erase(arrows_.begin() + k);
-                continue;
-            }
-            ++k;
-        }
-    }
-
-    std::vector<Arrow> arrows_;
-};
+using ArrowTracker = sr::ArrowTracker;
 
 // Neon sonar palette: cool cyan->teal below the low threshold, teal->amber up
 // to the high threshold, amber->red-magenta above. Threshold config semantics
@@ -505,7 +284,7 @@ void DrawScene(ID2D1RenderTarget* rt, const SceneResources& res, const OverlayCo
     // Full cut inside +-duckConeDeg, linear ramp over the next 20 deg.
     auto duckLevel = [&](float angle, float strength) {
         if (duckAmt <= 0.0f || !cfg.duckEnabled) return strength;
-        float ad = std::fabs(AngDist(angle, 0.0f));
+        float ad = std::fabs(ArrowAngDist(angle, 0.0f));
         float factor = 1.0f;
         if (ad <= cfg.duckConeDeg) factor = 1.0f - duckAmt;
         else if (ad < cfg.duckConeDeg + 20.0f)
@@ -516,7 +295,7 @@ void DrawScene(ID2D1RenderTarget* rt, const SceneResources& res, const OverlayCo
     for (const auto& a : arrows) {
         float lvl = duckLevel(a.angle, a.strength);
         if (lvl <= 0.02f) continue;
-        int bestCh = NearestChannel(a.angle);
+        int bestCh = ArrowNearestChannel(a.angle);
         if (cfg.hideImpact && classifyOn && classes &&
             classes[bestCh] == SoundImpact)
             continue;
@@ -627,7 +406,7 @@ void DrawScene(ID2D1RenderTarget* rt, const SceneResources& res, const OverlayCo
         float lvl = duckLevel(a.angle, a.strength);
         if (lvl <= 0.02f) continue;
         if (cfg.hideImpact && classifyOn && classes &&
-            classes[NearestChannel(a.angle)] == SoundImpact)
+            classes[ArrowNearestChannel(a.angle)] == SoundImpact)
             continue;
         DrawCapsule(rt, res, cfg, a.angle, lvl, a.pulse, w, h, fx, timeSec);
     }
@@ -841,7 +620,7 @@ void Overlay::ThreadMain(bool visible) {
     float timeSec_ = 0.0f;     // shimmer clock (advances only while active)
     float duckAmt_ = 0.0f;     // front-duck envelope 0..1 (fire/walk keys)
 
-    // --- render loop: ~60 fps while audio active, ~4 fps polling when idle --
+    // --- render loop: up to ~120 fps while audio active, ~4 fps idle --------
     HANDLE waits[2] = { quitEvent_, stopEvent_ };
     while (initOk) {
         // drain any window messages (rare: we never take input)
@@ -869,11 +648,10 @@ void Overlay::ThreadMain(bool visible) {
             std::memcpy(classes, meters_->classes, sizeof(classes));
             srcCh = meters_->srcChannels;
         }
-        // display gain (sensitivity slider) after the sqrt envelope mapping
-        float sens = cfg_.sensitivity;
-        if (sens < 0.5f) sens = 0.5f;
-        if (sens > 4.0f) sens = 4.0f;
-        for (int c = 0; c < 8; ++c) frame.level[c] *= sens;
+        // No display gain here. The analyzer already applies the adaptive
+        // detection gain and the sensitivity curve to frame.level. A second
+        // multiply would amplify ambient noise into the display and make the
+        // sensitivity slider act twice.
         float maxLvl = 0.0f;
         for (int c = 0; c < 8; ++c) if (frame.level[c] > maxLvl) maxLvl = frame.level[c];
         bool active = frame.active || maxLvl > 0.02f;
@@ -892,11 +670,13 @@ void Overlay::ThreadMain(bool visible) {
         // stereo-pan ONLY when BOTH FL and FR carry energy and nothing else
         // does. A single active channel must produce a fixed arc at its own
         // angle (the cluster tracker does that) - never a pan jump to +-90.
+        // frontMerge means "one arrow dead ahead", so the pan path stays off:
+        // otherwise the merge toggle and the pan path fight over the front pair.
         bool frontPair = frame.level[0] > 0.03f && frame.level[1] > 0.03f;
         bool othersQuiet = true;
         for (int c = 2; c < 8; ++c)
             if (frame.level[c] > 0.03f) othersQuiet = false;
-        bool wantStereo = (srcCh == 2) || (frontPair && othersQuiet);
+        bool wantStereo = (srcCh == 2) || (frontPair && othersQuiet && !cfg_.frontMerge);
         if (wantStereo != stereoMode_) {
             // hysteresis: switch only after ~300 ms of consistent evidence
             modeTimer_ += dt;
@@ -950,7 +730,9 @@ void Overlay::ThreadMain(bool visible) {
         // measure the whole iteration (sleep included) for a true loop CPU%
         CpuProbe probe;
         probe.Begin();
-        DWORD timeout = active ? 16 : 250; // 60 fps / 4 fps
+        // 8 ms while audio is present (~120 fps) so arrow motion does not step,
+        // 250 ms when idle so an idle overlay costs nothing.
+        DWORD timeout = active ? 8 : 250;
         DWORD wr = WaitForMultipleObjects(2, waits, FALSE, timeout);
         if (wr != WAIT_TIMEOUT) break; // quit or stop
 

@@ -26,18 +26,21 @@ enum SoundClass : uint8_t {
 
 struct ClassifyConfig {
     float sampleRate = 48000.0f;
-    float burstThreshold = 0.02f;  // block RMS that starts a burst
+    float burstThreshold = 0.005f; // block RMS that starts a burst (raw units)
     float maxBurstMs = 250.0f;     // longer bursts are "sustained", never classified
     float lowDominantRatio = 2.5f; // lowE > ratio * highE -> low-band dominant
     float broadbandRatio = 0.4f;   // highE > ratio * lowE  -> broadband
     float minCrest = 2.0f;         // peak/RMS for a sharp transient
     float minSpacingMs = 250.0f;   // footstep repetition window
     float maxSpacingMs = 700.0f;
-    float impactMaxBurstMs = 60.0f; // impacts are shorter bursts than gunshots
+    // A quiet step only holds above the gate for 30-40 ms, so this cap decides
+    // whether such a step stays a footstep or becomes an impact. 35 ms keeps
+    // real bullet cracks (under 35 ms) separate from quiet steps.
+    float impactMaxBurstMs = 35.0f; // impacts are shorter bursts than gunshots
     float impactHighRatio = 2.0f;   // highE > ratio * lowE -> bullet impact
     float impactMinCrest = 1.8f;    // peak/RMS for an impact transient
     float historyMs = 3000.0f;     // sliding window for burst history
-    float holdMs = 600.0f;         // how long a classification stays visible
+    float holdMs = 400.0f;         // how long a classification stays visible
 };
 
 class ChannelClassifier {
@@ -46,7 +49,14 @@ public:
 
     void Reset();
     // One mono block (any length; capture packets are ~10 ms at 48 kHz).
-    void Process(const float* samples, size_t n);
+    // gain: the adaptive detection gain the analyzer applied to this block.
+    //   Block rms and crest are level-invariant, so the gain does not change the
+    //   classification decisions; it is kept for callers and future use.
+    // gateOpen: false while the block sits at the ambient noise floor. A closed
+    //   gate suppresses classification, so hiss never becomes a false arrow.
+    // burstThreshold: analyzer threshold in raw units; 0 = use the config value.
+    void Process(const float* samples, size_t n, float gain = 1.0f, bool gateOpen = true,
+                 float burstThreshold = 0.0f);
 
     SoundClass Current() const { return held_; }
     // true when the pattern matched strongly (e.g. 3+ footstep bursts).
@@ -60,6 +70,7 @@ private:
     ClassifyConfig cfg_;
     uint64_t nowMs_ = 0;
     uint64_t blockMs_ = 0; // duration of the current block, set in Process
+    float gain_ = 1.0f;    // adaptive detection gain for the current block
 
     // burst state
     bool inBurst_ = false;
@@ -81,7 +92,13 @@ class Classifier8 {
 public:
     explicit Classifier8(const ClassifyConfig& cfg = ClassifyConfig());
     void Reset();
-    void Process(const float* in8, size_t frames);
+    // gain: adaptive detection gain from the Analyzer for this block.
+    // gateOpen: analyzer gate state; false suppresses classification.
+    // burstThreshold: analyzer threshold in raw units; 0 = use the config value.
+    // thresholds8: per-channel thresholds (Analyzer::BurstThresholds). When set,
+    //   each channel uses its own value, so a loud channel cannot hide a quiet one.
+    void Process(const float* in8, size_t frames, float gain = 1.0f, bool gateOpen = true,
+                 float burstThreshold = 0.0f, const float* thresholds8 = nullptr);
     SoundClass ClassOf(int ch) const { return ch_[ch].Current(); }
     bool Confident(int ch) const { return ch_[ch].Confident(); }
 

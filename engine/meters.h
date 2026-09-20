@@ -20,6 +20,8 @@ struct SharedMeters {
     AnalysisFrame frame;
     uint8_t classes[8] = {};       // SoundClass per channel (classification milestone)
     uint32_t srcChannels = 8;      // actual capture channels (2 = stereo: pan-tracking mode)
+    float detectGain = 1.0f;       // adaptive detection gain applied to this frame
+    float noiseFloorDbfs = -100.0f; // measured ambient floor, for diagnostics
 };
 
 // Live-downmix snapshot: read once per render buffer (~100 Hz), written by

@@ -22,7 +22,7 @@ struct OverlayConfig {
     float sensitivity = 2.0f; // display gain 0.5-4.0, applied after sqrt mapping
     int edgeWidthPct = 100;   // edge-band thickness multiplier, percent (50-250)
     int edgeLenPct = 100;     // edge-band length multiplier, percent (50-250)
-    float detectThreshold = 0.02f;  // class-arrow detection threshold (was hardcoded 0.05)
+    float detectThreshold = 0.01f;  // class-arrow detection threshold (display units)
     bool frontMerge = true;   // merge the two front FL/FR arrows into one
     bool hideImpact = false;  // hide arrows classified as bullet impacts
     bool duckEnabled = true;  // attenuate front class arrows while own keys are held

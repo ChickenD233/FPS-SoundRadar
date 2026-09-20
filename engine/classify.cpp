@@ -1,6 +1,10 @@
 #include "classify.h"
 
+#include "floatcmp.h"
+
 #include <cmath>
+#include <cstdio>
+#include <cstdlib>
 #include <cstring>
 
 namespace sr {
@@ -29,22 +33,49 @@ float ChannelClassifier::GoertzelEnergy(float freq, const float* x, size_t n) co
     return static_cast<float>(2.0 * std::sqrt(power < 0 ? 0 : power) / n);
 }
 
-void ChannelClassifier::Process(const float* x, size_t n) {
+void ChannelClassifier::Process(const float* x, size_t n, float gain, bool gateOpen,
+                                float burstThreshold) {
     if (n == 0) return;
+    gain_ = (gain > 0.0f) ? gain : 1.0f;
     blockMs_ = static_cast<uint64_t>(n * 1000.0 / cfg_.sampleRate);
 
-    // block features
+    // Closed gate: the block is ambient noise floor. End any open burst and
+    // drop held state without classifying.
+    if (!gateOpen) {
+        if (inBurst_) {
+            inBurst_ = false;
+            sustained_ = false;
+        }
+        if (nowMs_ >= holdUntilMs_ && held_ != SoundNone) {
+            if (getenv("SR_BURST"))
+                fprintf(stderr, "    GATECLOSE clear held cls=%d at now=%llu\n", (int)held_,
+                        (unsigned long long)nowMs_);
+            held_ = SoundNone;
+            confident_ = false;
+        }
+        nowMs_ += blockMs_;
+        return;
+    }
+
+    // Block features stay on the raw signal: rms and crest are level-invariant,
+    // so a quiet footstep has the same crest as a loud one. The adaptive gain
+    // only decides whether this block is a burst.
     double sumSq = 0.0;
     float peak = 0.0f;
     for (size_t i = 0; i < n; ++i) {
-        float a = std::fabs(x[i]);
-        sumSq += static_cast<double>(x[i]) * x[i];
-        if (a > peak) peak = a;
+        float s = x[i];
+        float a = std::fabs(s);
+        sumSq += static_cast<double>(s) * s;
+        if (FCmpGt(a, peak)) peak = a;
     }
     float rms = static_cast<float>(std::sqrt(sumSq / n));
-    float crest = (rms > 1e-6f) ? peak / rms : 0.0f;
+    float crest = FCmpGt(rms, 1e-6f) ? peak / rms : 0.0f;
 
-    bool burstNow = rms >= cfg_.burstThreshold;
+    // Burst threshold arrives in raw units (analyzer floor + margin), so compare
+    // against the raw block rms. The adaptive gain no longer scales this test:
+    // that kept the old absolute threshold and lost the quiet steps again.
+    const float thresh = FCmpGt(burstThreshold, 0.0f) ? burstThreshold : cfg_.burstThreshold;
+    bool burstNow = FCmpGe(rms, thresh);
     if (burstNow) {
         float low = 0.0f, high = 0.0f;
         for (float f : kLowBank) low += GoertzelEnergy(f, x, n);
@@ -64,7 +95,7 @@ void ChannelClassifier::Process(const float* x, size_t n) {
         burstLow_ += low;
         burstHigh_ += high;
         if (crest > burstCrest_) burstCrest_ = crest;
-        if (burstMs_ > cfg_.maxBurstMs) sustained_ = true;
+        if (FCmpGt(burstMs_, cfg_.maxBurstMs)) sustained_ = true;
     } else if (inBurst_) {
         inBurst_ = false;
         OnBurstEnd();
@@ -79,18 +110,21 @@ void ChannelClassifier::Process(const float* x, size_t n) {
 }
 
 void ChannelClassifier::OnBurstEnd() {
-    if (sustained_ || burstMs_ > cfg_.maxBurstMs) return;
+    if (getenv("SR_BURST"))
+        fprintf(stderr, "  burst ms=%.0f low=%.5f high=%.5f crest=%.2f\n",
+                burstMs_, burstLow_, burstHigh_, burstCrest_);
+    if (sustained_ || FCmpGt(burstMs_, cfg_.maxBurstMs)) return;
 
-    bool lowDominant = burstLow_ > cfg_.lowDominantRatio * burstHigh_;
-    bool broadband = burstHigh_ > cfg_.broadbandRatio * burstLow_ &&
-                     burstCrest_ >= cfg_.minCrest;
-    bool impact = burstMs_ < cfg_.impactMaxBurstMs &&
-                  burstHigh_ > cfg_.impactHighRatio * burstLow_ &&
-                  burstCrest_ >= cfg_.impactMinCrest;
+    bool lowDominant = FCmpGt(burstLow_, cfg_.lowDominantRatio * burstHigh_);
+    bool broadband = FCmpGt(burstHigh_, cfg_.broadbandRatio * burstLow_) &&
+                     FCmpGe(burstCrest_, cfg_.minCrest);
+    bool impact = FCmpLt(burstMs_, cfg_.impactMaxBurstMs) &&
+                  FCmpGt(burstHigh_, cfg_.impactHighRatio * burstLow_) &&
+                  FCmpGe(burstCrest_, cfg_.impactMinCrest);
 
     if (impact) {
         // bullet hit: short, crisp, high-band crack without muzzle thump
-        Classify(SoundImpact, burstCrest_ >= cfg_.minCrest, nowMs_);
+        Classify(SoundImpact, FCmpGe(burstCrest_, cfg_.minCrest), nowMs_);
     } else if (lowDominant) {
         // record burst end time in the sliding window ring
         burstTimes_[burstCount_ % 16] = nowMs_;
@@ -118,14 +152,20 @@ void ChannelClassifier::OnBurstEnd() {
                     ++pairs;
             }
         }
+        if (getenv("SR_BURST"))
+            fprintf(stderr, "    pairs=%d inWindow=%d n=%d now=%llu\n", pairs, inWindow,
+                    (int)n, (unsigned long long)nowMs_);
         if (pairs >= 2) Classify(SoundFootstep, pairs >= 2 && inWindow >= 3, nowMs_);
     } else if (broadband) {
         // one-shot: no low-band periodicity observed recently
-        Classify(SoundGunshot, burstCrest_ >= cfg_.minCrest * 1.2f, nowMs_);
+        Classify(SoundGunshot, FCmpGe(burstCrest_, cfg_.minCrest * 1.2f), nowMs_);
     }
 }
 
 void ChannelClassifier::Classify(SoundClass cls, bool confident, uint64_t nowMs) {
+    if (getenv("SR_BURST"))
+        fprintf(stderr, "    CLASSIFY cls=%d conf=%d now=%llu\n", (int)cls, confident ? 1 : 0,
+                (unsigned long long)nowMs);
     held_ = cls;
     confident_ = confident;
     holdUntilMs_ = nowMs + static_cast<uint64_t>(cfg_.holdMs);
@@ -141,13 +181,15 @@ void Classifier8::Reset() {
     for (auto& c : ch_) c.Reset();
 }
 
-void Classifier8::Process(const float* in8, size_t frames) {
+void Classifier8::Process(const float* in8, size_t frames, float gain, bool gateOpen,
+                          float burstThreshold, const float* thresholds8) {
     const size_t chunk = 4096;
     for (size_t off = 0; off < frames; off += chunk) {
         size_t n = (frames - off < chunk) ? frames - off : chunk;
         for (int c = 0; c < 8; ++c) {
             for (size_t f = 0; f < n; ++f) mono_[c][f] = in8[(off + f) * 8 + c];
-            ch_[c].Process(mono_[c], n);
+            const float thr = thresholds8 ? thresholds8[c] : burstThreshold;
+            ch_[c].Process(mono_[c], n, gain, gateOpen, thr);
         }
     }
 }

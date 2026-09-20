@@ -33,6 +33,7 @@
 #include "render.h"
 #include "ring.h"
 #include "selftest.h"
+#include "selftest_detect.h"
 #include "simulate.h"
 #include "tray.h"
 
@@ -87,6 +88,7 @@ void PrintUsage() {
         "  --tray                 tray only, no window (autostart uses this)\n"
         "  --selftest             DSP self-tests (no audio devices needed), exit 0/1\n"
         "  --classifytest         sound classification tests (experimental), exit 0/1\n"
+        "  --sselftest            adaptive detection tests (quiet mix, noise, fade), exit 0/1\n"
         "  --guitest              hidden GUI test: controls, Apply, config round-trip\n"
         "  --simulate-gui         hidden GUI + overlay plumbing test\n"
         "  --onscreen-proof       visible overlay + CopyFromScreen pixel check\n"
@@ -177,6 +179,7 @@ struct Pipeline {
         ring_ = std::make_unique<sr::RingBuffer>(8192);
         sr::AnalysisConfig acfg = cfg.analysis;
         acfg.sampleRate = static_cast<float>(cap_->GetFormat().sampleRate);
+        acfg.configBurstRms = cfg.classify.burstThreshold;
         analyzer_ = std::make_unique<sr::Analyzer>(acfg);
         sr::ClassifyConfig ccfg = cfg.classify;
         ccfg.sampleRate = static_cast<float>(cap_->GetFormat().sampleRate);
@@ -205,10 +208,13 @@ struct Pipeline {
                 }
                 sr::AnalysisFrame fr;
                 analyzer->Process(frames, n, fr);
-                classifier->Process(frames, n);
+                classifier->Process(frames, n, analyzer->DetectGain(), analyzer->GateOpen(),
+                                    analyzer->DetectThreshold(), analyzer->BurstThresholds());
                 {
                     std::lock_guard<std::mutex> lk(meters->mu);
                     meters->frame = fr;
+                    meters->detectGain = fr.detectGain;
+                    meters->noiseFloorDbfs = fr.noiseFloorDbfs;
                     for (int c = 0; c < 8; ++c)
                         meters->classes[c] = static_cast<uint8_t>(classifier->ClassOf(c));
                 }
@@ -273,6 +279,15 @@ struct Pipeline {
             sr::Log("telemetry: ringOverruns=+%llu renderPad=[%lu..%lu] capGaps=+%llu",
                     (unsigned long long)ringDelta, (unsigned long)pMin,
                     (unsigned long)pMax, (unsigned long long)gaps);
+        if (meters_) {
+            float gain = 1.0f, floorDb = -100.0f;
+            {
+                std::lock_guard<std::mutex> lk(meters_->mu);
+                gain = meters_->detectGain;
+                floorDb = meters_->noiseFloorDbfs;
+            }
+            sr::Log("detect: ambient=%.1f dBFS gain=%.1fx", floorDb, gain);
+        }
     }
 
 private:
@@ -307,6 +322,15 @@ int RunApp(sr::AppConfig& cfg, const std::wstring& configPath, bool trayMode,
         ++sr::g_overlay.version;
     }
     {
+        std::lock_guard<std::mutex> lk(sr::g_analysis.mu);
+        sr::g_analysis.cfg.detectSensitivity = cfg.overlay.sensitivity;
+        ++sr::g_analysis.version;
+    }
+    {
+        // The detection sensitivity belongs to the analyzer: it scales the
+        // adaptive gain, the gate, and the classifier threshold. A display-only
+        // gain did not help detection at all, which is why the slider felt dead.
+        cfg.analysis.detectSensitivity = cfg.overlay.sensitivity;
         std::lock_guard<std::mutex> lk(sr::g_analysis.mu);
         sr::g_analysis.cfg = cfg.analysis;
         ++sr::g_analysis.version;
@@ -901,6 +925,11 @@ int RunSimulateGui(sr::AppConfig cfg) {
         ++sr::g_overlay.version;
     }
     {
+        std::lock_guard<std::mutex> lk(sr::g_analysis.mu);
+        sr::g_analysis.cfg.detectSensitivity = cfg.overlay.sensitivity;
+        ++sr::g_analysis.version;
+    }
+    {
         std::lock_guard<std::mutex> lk(sr::g_downmix.mu);
         sr::g_downmix.cfg = cfg.downmix;
     }
@@ -1044,6 +1073,11 @@ int RunOnscreenProof(sr::AppConfig cfg) {
         std::lock_guard<std::mutex> lk(sr::g_overlay.mu);
         sr::g_overlay.cfg = cfg.overlay;
         ++sr::g_overlay.version;
+    }
+    {
+        std::lock_guard<std::mutex> lk(sr::g_analysis.mu);
+        sr::g_analysis.cfg.detectSensitivity = cfg.overlay.sensitivity;
+        ++sr::g_analysis.version;
     }
     sr::SharedMeters meters;
 
@@ -1197,6 +1231,11 @@ int RunStyleShot(sr::AppConfig cfg) {
         sr::g_overlay.cfg = cfg.overlay;
         ++sr::g_overlay.version;
     }
+    {
+        std::lock_guard<std::mutex> lk(sr::g_analysis.mu);
+        sr::g_analysis.cfg.detectSensitivity = cfg.overlay.sensitivity;
+        ++sr::g_analysis.version;
+    }
     sr::SharedMeters meters;
     {
         std::lock_guard<std::mutex> lk(meters.mu);
@@ -1268,6 +1307,11 @@ int RunPanSweep(sr::AppConfig cfg, bool container8) {
         sr::g_overlay.cfg = cfg.overlay;
         ++sr::g_overlay.version;
     }
+    {
+        std::lock_guard<std::mutex> lk(sr::g_analysis.mu);
+        sr::g_analysis.cfg.detectSensitivity = cfg.overlay.sensitivity;
+        ++sr::g_analysis.version;
+    }
     sr::SharedMeters meters;
     {
         std::lock_guard<std::mutex> lk(meters.mu);
@@ -1332,6 +1376,11 @@ int RunOrbitTest(sr::AppConfig cfg, bool dual) {
         std::lock_guard<std::mutex> lk(sr::g_overlay.mu);
         sr::g_overlay.cfg = cfg.overlay;
         ++sr::g_overlay.version;
+    }
+    {
+        std::lock_guard<std::mutex> lk(sr::g_analysis.mu);
+        sr::g_analysis.cfg.detectSensitivity = cfg.overlay.sensitivity;
+        ++sr::g_analysis.version;
     }
     sr::SharedMeters meters;
     sr::Overlay overlay;
@@ -1486,7 +1535,7 @@ int wmain(int argc, wchar_t** argv) {
     std::wstring simScenario;
     std::wstring overlayTestShot;
     bool selftest = false, measure = false, measureLoopback = false, list = false;
-    bool trayMode = false, overlayTest = false, classifyTest = false;
+    bool trayMode = false, overlayTest = false, classifyTest = false, sselftest = false;
     bool guiTest = false, simGui = false, diag = false, onscreenProof = false;
     bool setDefault = false;
     bool styleShot = false;
@@ -1510,6 +1559,7 @@ int wmain(int argc, wchar_t** argv) {
             return argv[++i];
         };
         if (a == L"--selftest") selftest = true;
+        else if (a == L"--sselftest") sselftest = true;
         else if (a == L"--classifytest") classifyTest = true;
         else if (a == L"--guitest") guiTest = true;
         else if (a == L"--simulate-gui") simGui = true;
@@ -1548,6 +1598,7 @@ int wmain(int argc, wchar_t** argv) {
         }
     }
 
+    if (sselftest) return sr::RunDetectSelfTest();
     if (selftest) return sr::RunSelfTest();
     if (classifyTest) return sr::RunClassifyTest();
 

@@ -27,6 +27,7 @@ add_executable(SoundRadar
     config.cpp
     wasapi_util.cpp
     selftest.cpp
+    selftest_detect.cpp
     classify.cpp
     measure.cpp
     pantest.cpp

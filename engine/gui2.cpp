@@ -638,6 +638,10 @@ void Gui::OnBridgeMessage(const wchar_t* jsonW) {
             ++g_overlay.version;
         }
         {
+            // Keep the analyzer sensitivity in step with the overlay slider: the
+            // slider feeds the adaptive detection gain and the gate, not a
+            // display-only multiply.
+            cfg.analysis.detectSensitivity = cfg.overlay.sensitivity;
             std::lock_guard<std::mutex> lk(g_analysis.mu);
             g_analysis.cfg = cfg.analysis;
             ++g_analysis.version;
@@ -780,6 +784,7 @@ void Gui::ApplyFromJson(const std::string& cj, int selIn, int selOut) {
         ++g_overlay.version;
     }
     {
+        cfg.analysis.detectSensitivity = cfg.overlay.sensitivity;
         std::lock_guard<std::mutex> lk(g_analysis.mu);
         g_analysis.cfg = cfg.analysis;
         ++g_analysis.version;

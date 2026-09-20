@@ -13,7 +13,7 @@ namespace sr {
 
 // config file schema version; bump when retuned defaults must overwrite the
 // values old builds persisted (see the migration at the end of LoadConfig).
-constexpr int kConfigVersion = 2;
+constexpr int kConfigVersion = 3;
 
 std::wstring DefaultConfigPath() {
     wchar_t buf[MAX_PATH] = {};
@@ -177,9 +177,17 @@ bool LoadConfig(const std::wstring& path, AppConfig& cfg) {
     if (!GetNumber(json, "config_version", ver) || ver < 2) {
         cfg.overlay.lowThreshold = 0.08f;
         cfg.overlay.highThreshold = 0.30f;
-        cfg.overlay.detectThreshold = 0.02f;
+        cfg.overlay.detectThreshold = 0.01f;
         cfg.analysis.activityThreshold = 0.02f;
-        cfg.classify.burstThreshold = 0.02f;
+        cfg.classify.burstThreshold = 0.005f;
+    }
+    // migration v3: adaptive detection. The analyzer now normalizes the levels
+    // against the measured noise floor, so the old 0.02 display threshold sits
+    // above a quiet step and the burst threshold no longer needs to carry the
+    // detection work.
+    if (ver < 3) {
+        cfg.overlay.detectThreshold = 0.01f;
+        cfg.classify.burstThreshold = 0.005f;
     }
     return true;
 }

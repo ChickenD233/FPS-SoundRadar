@@ -26,8 +26,15 @@ Game → SoundRadar VAD (virtual 7.1 driver) → loopback capture → SoundRadar
 
 ### Features
 
-- Direction arrows on an invisible ring (continuous 360° tracking, one arrow per simultaneous source) and screen-edge bands, color-graded by loudness (green far, yellow mid, red near; thresholds adjustable). Display sensitivity adjustable for quiet footsteps.
-- 300–500 ms fade-out and smoothing, no flicker.
+- Direction arrows on an invisible ring (continuous 360° tracking, one arrow per simultaneous source) and screen-edge bands, color-graded by loudness (green far, yellow mid, red near; thresholds adjustable).
+- Adaptive detection. The engine measures the ambient noise floor per channel over a sliding window and normalizes against it, so a quiet game mix (for example 40% global volume) still trips the arrows. The sensitivity slider feeds that detection gain, not a display-only multiply. Footsteps 15-20 dB above the ambient floor are detected. The old fixed thresholds stopped at -24 dBFS.
+- The sensitivity slider still keeps the color scale readable: it is compressed, so 4x does not turn every arrow red at once.
+- Noise gate. Ambient hiss and fan noise produce no arrows and no glow, so a direction indicator always means real sound.
+- Frontal merge. With the merge toggle on, the front-left and front-right pair always draws ONE arrow dead ahead, even when the two channels differ in level.
+- Fast release. Arrows reach zero 300-700 ms after the sound stops, so no mark lingers over an empty scene.
+- 50 ms arrow glide, 250 ms display fade, 120 ms noise-gate release. No flicker.
+- Overlay refresh: up to ~120 fps while sound is present, ~4 fps when idle.
+- `SoundRadar.exe --sselftest` runs the detection tests (quiet mix, noise rejection, fade, recovery) without audio devices.
 - Overlay: topmost, fully click-through, never steals focus. CPU under 5% while active, near zero when idle.
 - Downmix modes: right-ear mono (default) and standard stereo.
 - Experimental sound classification: footsteps (100–300 Hz, periodic bursts) and gunshots (broadband transient) get distinct markers.
@@ -114,8 +121,15 @@ FPS-SoundRadar 提供两个功能：
 
 ### 功能
 
-- 隐形圆环上的方向箭头（360° 连续跟踪，每个声源一个箭头）+ 屏幕四边条带，按响度分级变色（绿=远、黄=中、红=近，阈值可调）。显示灵敏度可调，轻微脚步也可见。
-- 声音消失后 300–500 ms 渐隐，平滑滤波防闪烁。
+- 隐形圆环上的方向箭头（360° 连续跟踪，每个声源一个箭头）+ 屏幕四边条带，按响度分级变色（绿=远、黄=中、红=近，阈值可调）。
+- 自适应检测。引擎逐声道在滑动窗口内测量环境噪声底，并据此归一化阈值。因此游戏全局音量只有 40% 时，轻微脚步依然能触发箭头。灵敏度滑块直接参与检测增益，不再只是显示放大。比环境噪声底高 15–20 dB 的脚步即可检出；旧的固定阈值下限是 -24 dBFS。
+- 灵敏度滑块做了压缩，4x 也不会把所有箭头一次全变红，颜色分级始终可读。
+- 噪声门。环境底噪和风扇声不会画出箭头、也不会发光，所以出现声纹就一定代表真实声音。
+- 正前方融合。开启融合开关后，左前+右前永远只画一个正前方箭头，两声道音量不一致时也一样。
+- 快速消失。声音停止后 300–700 ms 内声纹归零，不会在空场景上残留。
+- 50 ms 箭头滑动、250 ms 显示渐隐、120 ms 噪声门释放，防闪烁。
+- Overlay 刷新率：有声时最高约 120 fps，空闲约 4 fps。
+- `SoundRadar.exe --sselftest` 无需音频设备即可运行检测测试（轻音混音、噪声抑制、渐隐、恢复）。
 - Overlay 置顶、完全点击穿透、不抢焦点。工作时 CPU 低于 5%，空闲接近零。
 - 下混模式：右耳单声道（默认）和标准立体声。
 - 实验性声音分类：脚步（100–300 Hz 周期性短促爆发）和枪声（宽带高瞬态）有专用标记。
