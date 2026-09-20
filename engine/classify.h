@@ -33,9 +33,9 @@ struct ClassifyConfig {
     float minCrest = 2.0f;         // peak/RMS for a sharp transient
     float minSpacingMs = 250.0f;   // footstep repetition window
     float maxSpacingMs = 700.0f;
-    float impactMaxBurstMs = 80.0f; // impacts are shorter bursts than gunshots
-    float impactHighRatio = 1.5f;   // highE > ratio * lowE -> bullet impact
-    float impactMinCrest = 1.6f;    // peak/RMS for an impact transient
+    float impactMaxBurstMs = 60.0f; // impacts are shorter bursts than gunshots
+    float impactHighRatio = 2.0f;   // highE > ratio * lowE -> bullet impact
+    float impactMinCrest = 1.8f;    // peak/RMS for an impact transient
     float historyMs = 3000.0f;     // sliding window for burst history
     float holdMs = 600.0f;         // how long a classification stays visible
 };

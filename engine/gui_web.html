@@ -456,10 +456,10 @@ $('btnExport').onclick = () => post({cmd:'exportConfig'});
 $('btnImport').onclick = () => post({cmd:'importConfig'});
 
 const PRESETS = {
-  default: { name:'默认', sensitivity:2.0, detect_threshold:0.03, classify_burst:0.04, classify_low_ratio:2.5, classify_min_crest:2.0, classify_spacing_min_ms:250, classify_spacing_max_ms:700, arrow_fade_ms:500, duck_enabled:true, duck_fire:0.85, duck_walk:0.65, duck_release_ms:300, duck_cone_deg:50, front_merge:true, hide_impact:false },
-  cs2:     { name:'CS2', sensitivity:2.2, detect_threshold:0.025, classify_burst:0.045, classify_low_ratio:1.5, classify_min_crest:2.0, classify_spacing_min_ms:250, classify_spacing_max_ms:700, arrow_fade_ms:500, duck_enabled:true, duck_fire:0.85, duck_walk:0.65, duck_release_ms:300, duck_cone_deg:50, front_merge:true, hide_impact:false },
-  valorant:{ name:'无畏契约', sensitivity:2.0, detect_threshold:0.03, classify_burst:0.04, classify_low_ratio:2.5, classify_min_crest:2.0, classify_spacing_min_ms:250, classify_spacing_max_ms:700, arrow_fade_ms:500, duck_enabled:true, duck_fire:0.85, duck_walk:0.65, duck_release_ms:300, duck_cone_deg:50, front_merge:true, hide_impact:true },
-  delta:   { name:'三角洲行动', sensitivity:3.0, detect_threshold:0.02, classify_burst:0.025, classify_low_ratio:2.0, classify_min_crest:1.8, classify_spacing_min_ms:220, classify_spacing_max_ms:750, arrow_fade_ms:600, duck_enabled:true, duck_fire:0.85, duck_walk:0.70, duck_release_ms:350, duck_cone_deg:50, front_merge:true, hide_impact:false }
+  default: { name:'默认', sensitivity:2.0, detect_threshold:0.03, classify_burst:0.04, classify_low_ratio:2.5, classify_min_crest:2.0, classify_spacing_min_ms:250, classify_spacing_max_ms:700, classify_impact_ms:60, classify_impact_ratio:2.0, classify_impact_crest:1.8, arrow_fade_ms:500, duck_enabled:true, duck_fire:0.85, duck_walk:0.65, duck_release_ms:300, duck_cone_deg:50, front_merge:true, hide_impact:false },
+  cs2:     { name:'CS2', sensitivity:2.2, detect_threshold:0.025, classify_burst:0.045, classify_low_ratio:1.5, classify_min_crest:2.0, classify_spacing_min_ms:250, classify_spacing_max_ms:700, classify_impact_ms:60, classify_impact_ratio:2.0, classify_impact_crest:1.8, arrow_fade_ms:500, duck_enabled:true, duck_fire:0.85, duck_walk:0.65, duck_release_ms:300, duck_cone_deg:50, front_merge:true, hide_impact:false },
+  valorant:{ name:'无畏契约', sensitivity:3.0, detect_threshold:0.02, classify_burst:0.03, classify_low_ratio:2.0, classify_min_crest:1.8, classify_spacing_min_ms:250, classify_spacing_max_ms:700, classify_impact_ms:60, classify_impact_ratio:2.2, classify_impact_crest:1.8, arrow_fade_ms:500, duck_enabled:true, duck_fire:0.85, duck_walk:0.65, duck_release_ms:300, duck_cone_deg:50, front_merge:true, hide_impact:true },
+  delta:   { name:'三角洲行动', sensitivity:3.0, detect_threshold:0.02, classify_burst:0.025, classify_low_ratio:2.0, classify_min_crest:1.8, classify_spacing_min_ms:220, classify_spacing_max_ms:750, classify_impact_ms:60, classify_impact_ratio:2.0, classify_impact_crest:1.8, arrow_fade_ms:600, duck_enabled:true, duck_fire:0.85, duck_walk:0.70, duck_release_ms:350, duck_cone_deg:50, front_merge:true, hide_impact:false }
 };
 // load: set the controls that exist, then post apply with the control-less
 // classify_* keys merged in (collectConfig alone would drop them)
@@ -482,7 +482,10 @@ function loadPreset(key) {
     classify_low_ratio: p.classify_low_ratio,
     classify_min_crest: p.classify_min_crest,
     classify_spacing_min_ms: p.classify_spacing_min_ms,
-    classify_spacing_max_ms: p.classify_spacing_max_ms
+    classify_spacing_max_ms: p.classify_spacing_max_ms,
+    classify_impact_ms: p.classify_impact_ms,
+    classify_impact_ratio: p.classify_impact_ratio,
+    classify_impact_crest: p.classify_impact_crest
   });
   post({cmd:'apply', selIn: $('selIn').selectedIndex,
         selOut: $('selOut').selectedIndex, config: cfg});
