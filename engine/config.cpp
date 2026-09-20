@@ -147,6 +147,7 @@ bool LoadConfig(const std::wstring& path, AppConfig& cfg) {
     if (GetNumber(json, "edge_len", d)) cfg.overlay.edgeLenPct = static_cast<int>(d);
     if (GetNumber(json, "detect_threshold", d)) cfg.overlay.detectThreshold = static_cast<float>(d);
     GetBool(json, "front_merge", cfg.overlay.frontMerge);
+    GetBool(json, "hide_impact", cfg.overlay.hideImpact);
     GetBool(json, "duck_enabled", cfg.overlay.duckEnabled);
     if (GetNumber(json, "duck_fire", d)) cfg.overlay.duckFire = static_cast<float>(d);
     if (GetNumber(json, "duck_walk", d)) cfg.overlay.duckWalk = static_cast<float>(d);
@@ -159,6 +160,9 @@ bool LoadConfig(const std::wstring& path, AppConfig& cfg) {
     if (GetNumber(json, "classify_min_crest", d)) cfg.classify.minCrest = static_cast<float>(d);
     if (GetNumber(json, "classify_spacing_min_ms", d)) cfg.classify.minSpacingMs = static_cast<float>(d);
     if (GetNumber(json, "classify_spacing_max_ms", d)) cfg.classify.maxSpacingMs = static_cast<float>(d);
+    if (GetNumber(json, "classify_impact_ms", d)) cfg.classify.impactMaxBurstMs = static_cast<float>(d);
+    if (GetNumber(json, "classify_impact_ratio", d)) cfg.classify.impactHighRatio = static_cast<float>(d);
+    if (GetNumber(json, "classify_impact_crest", d)) cfg.classify.impactMinCrest = static_cast<float>(d);
     GetBool(json, "render_exclusive", cfg.renderExclusive);
     return true;
 }
@@ -200,6 +204,7 @@ bool SaveConfig(const std::wstring& path, const AppConfig& cfg) {
     f << "  \"edge_len\": " << cfg.overlay.edgeLenPct << ",\n";
     f << "  \"detect_threshold\": " << cfg.overlay.detectThreshold << ",\n";
     f << "  \"front_merge\": " << (cfg.overlay.frontMerge ? "true" : "false") << ",\n";
+    f << "  \"hide_impact\": " << (cfg.overlay.hideImpact ? "true" : "false") << ",\n";
     f << "  \"duck_enabled\": " << (cfg.overlay.duckEnabled ? "true" : "false") << ",\n";
     f << "  \"duck_fire\": " << cfg.overlay.duckFire << ",\n";
     f << "  \"duck_walk\": " << cfg.overlay.duckWalk << ",\n";
@@ -212,6 +217,9 @@ bool SaveConfig(const std::wstring& path, const AppConfig& cfg) {
     f << "  \"classify_min_crest\": " << cfg.classify.minCrest << ",\n";
     f << "  \"classify_spacing_min_ms\": " << cfg.classify.minSpacingMs << ",\n";
     f << "  \"classify_spacing_max_ms\": " << cfg.classify.maxSpacingMs << ",\n";
+    f << "  \"classify_impact_ms\": " << cfg.classify.impactMaxBurstMs << ",\n";
+    f << "  \"classify_impact_ratio\": " << cfg.classify.impactHighRatio << ",\n";
+    f << "  \"classify_impact_crest\": " << cfg.classify.impactMinCrest << ",\n";
     f << "  \"render_exclusive\": " << (cfg.renderExclusive ? "true" : "false") << ",\n";
     f << "  \"autostart\": " << (cfg.autostart ? "true" : "false") << "\n";
     f << "}\n";

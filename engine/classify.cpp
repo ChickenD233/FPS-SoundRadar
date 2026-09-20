@@ -84,8 +84,14 @@ void ChannelClassifier::OnBurstEnd() {
     bool lowDominant = burstLow_ > cfg_.lowDominantRatio * burstHigh_;
     bool broadband = burstHigh_ > cfg_.broadbandRatio * burstLow_ &&
                      burstCrest_ >= cfg_.minCrest;
+    bool impact = burstMs_ < cfg_.impactMaxBurstMs &&
+                  burstHigh_ > cfg_.impactHighRatio * burstLow_ &&
+                  burstCrest_ >= cfg_.impactMinCrest;
 
-    if (lowDominant) {
+    if (impact) {
+        // bullet hit: short, crisp, high-band crack without muzzle thump
+        Classify(SoundImpact, burstCrest_ >= cfg_.minCrest, nowMs_);
+    } else if (lowDominant) {
         // record burst end time in the sliding window ring
         burstTimes_[burstCount_ % 16] = nowMs_;
         ++burstCount_;

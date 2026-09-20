@@ -466,6 +466,7 @@ void Gui::PushState() {
     addNum("duck_cone_deg", cfg.overlay.duckConeDeg);
     addNum("arrow_fade_ms", cfg.overlay.arrowFadeMs);
     j += ",\"front_merge\":"; j += cfg.overlay.frontMerge ? "true" : "false";
+    j += ",\"hide_impact\":"; j += cfg.overlay.hideImpact ? "true" : "false";
     j += ",\"duck_enabled\":"; j += cfg.overlay.duckEnabled ? "true" : "false";
     j += ",\"overlay_enabled\":"; j += cfg.overlay.enabled ? "true" : "false";
     j += ",\"classify_enabled\":"; j += cfg.classifyEnabled ? "true" : "false";
@@ -690,7 +691,20 @@ void Gui::ApplyFromJson(const std::string& cj, int selIn, int selOut) {
     if (cfg.classify.maxSpacingMs > 1200.f) cfg.classify.maxSpacingMs = 1200.f;
     if (cfg.classify.minSpacingMs >= cfg.classify.maxSpacingMs)
         cfg.classify.minSpacingMs = cfg.classify.maxSpacingMs - 50.f;
+    if (JNum(cj, "classify_impact_ms", d))
+        cfg.classify.impactMaxBurstMs = static_cast<float>(d);
+    if (cfg.classify.impactMaxBurstMs < 30.f) cfg.classify.impactMaxBurstMs = 30.f;
+    if (cfg.classify.impactMaxBurstMs > 200.f) cfg.classify.impactMaxBurstMs = 200.f;
+    if (JNum(cj, "classify_impact_ratio", d))
+        cfg.classify.impactHighRatio = static_cast<float>(d);
+    if (cfg.classify.impactHighRatio < 1.0f) cfg.classify.impactHighRatio = 1.0f;
+    if (cfg.classify.impactHighRatio > 4.0f) cfg.classify.impactHighRatio = 4.0f;
+    if (JNum(cj, "classify_impact_crest", d))
+        cfg.classify.impactMinCrest = static_cast<float>(d);
+    if (cfg.classify.impactMinCrest < 1.2f) cfg.classify.impactMinCrest = 1.2f;
+    if (cfg.classify.impactMinCrest > 4.0f) cfg.classify.impactMinCrest = 4.0f;
     JBool(cj, "front_merge", cfg.overlay.frontMerge);
+    JBool(cj, "hide_impact", cfg.overlay.hideImpact);
     JBool(cj, "duck_enabled", cfg.overlay.duckEnabled);
     if (JNum(cj, "duck_fire", d)) cfg.overlay.duckFire = static_cast<float>(d);
     if (cfg.overlay.duckFire < 0.0f) cfg.overlay.duckFire = 0.0f;

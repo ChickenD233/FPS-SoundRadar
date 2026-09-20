@@ -7,6 +7,8 @@
 //             with 250-700 ms spacing inside a sliding 3 s window.
 //   GUNSHOT:  broadband one-shot transient (high crest factor, energy above
 //             2 kHz comparable to the low band, no periodicity).
+//   IMPACT:   bullet-hit crack - very short (< 80 ms), high-band dominant,
+//             sharp crest, no low-band muzzle thump.
 //   else NONE.
 #pragma once
 
@@ -19,6 +21,7 @@ enum SoundClass : uint8_t {
     SoundNone = 0,
     SoundFootstep = 1,
     SoundGunshot = 2,
+    SoundImpact = 3,
 };
 
 struct ClassifyConfig {
@@ -30,6 +33,9 @@ struct ClassifyConfig {
     float minCrest = 2.0f;         // peak/RMS for a sharp transient
     float minSpacingMs = 250.0f;   // footstep repetition window
     float maxSpacingMs = 700.0f;
+    float impactMaxBurstMs = 80.0f; // impacts are shorter bursts than gunshots
+    float impactHighRatio = 1.5f;   // highE > ratio * lowE -> bullet impact
+    float impactMinCrest = 1.6f;    // peak/RMS for an impact transient
     float historyMs = 3000.0f;     // sliding window for burst history
     float holdMs = 600.0f;         // how long a classification stays visible
 };

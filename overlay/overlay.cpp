@@ -65,6 +65,18 @@ float NormAngle(float a) {
     return a - 180.0f;
 }
 
+// directional channel whose angle is closest to `angleDeg` (LFE excluded)
+int NearestChannel(float angleDeg) {
+    int best = -1;
+    float bestD = 1e9f;
+    for (int c = 0; c < 8; ++c) {
+        if (c == 3) continue; // LFE has no angle
+        float d = std::fabs(AngDist(angleDeg, kAngleDeg[c]));
+        if (d < bestD) { bestD = d; best = c; }
+    }
+    return best;
+}
+
 // --- direction estimation: peak cluster centroid + cross-frame tracking ----
 
 class ArrowTracker {
@@ -109,11 +121,14 @@ public:
                 double sx = 0, sy = 0;
                 float emax = 0;
                 for (int j = (a + 6) % 7;; j = (j + 1) % 7) {
-                    float w = levels[kRingCh[j]];
+                    float lv = levels[kRingCh[j]];
+                    // run +/- 1 neighbor: noise below minLevel gets no vote
+                    bool edge = (j == (a + 6) % 7 || j == (b + 1) % 7);
+                    float w = (edge && lv < minLevel) ? 0.0f : std::sqrt(lv);
                     float rad = kRingAng[j] * kPi / 180.0f;
                     sx += w * std::sin(rad);
                     sy += w * std::cos(rad);
-                    if (w > emax) emax = w;
+                    if (lv > emax) emax = lv;
                     if (j == (b + 1) % 7) break;
                 }
                 if (nPeaks < 4 && (sx * sx + sy * sy) > 1e-6) {
@@ -500,6 +515,10 @@ void DrawScene(ID2D1RenderTarget* rt, const SceneResources& res, const OverlayCo
     for (const auto& a : arrows) {
         float lvl = duckLevel(a.angle, a.strength);
         if (lvl <= 0.02f) continue;
+        int bestCh = NearestChannel(a.angle);
+        if (cfg.hideImpact && classifyOn && classes &&
+            classes[bestCh] == SoundImpact)
+            continue;
         // scale-in pop over ~150 ms after spawn
         float pop = (a.age < 0.15f) ? 0.6f + 0.4f * (a.age / 0.15f) : 1.0f;
         float len = (18.0f + 16.0f * lvl) * pop;   // 18..34 px, loud = longer
@@ -555,17 +574,11 @@ void DrawScene(ID2D1RenderTarget* rt, const SceneResources& res, const OverlayCo
             rt->DrawEllipse(D2D1::Ellipse(at, rr, rr), res.brush.Get(), 1.5f);
         }
 
-        // type icon just past the arrow tip (only when classification fires)
+        // type icon just past the arrow tip (only when classification fires;
+        // impacts draw no icon)
         if (classifyOn && classes) {
-            int bestCh = -1;
-            float bestD = 1e9f;
-            for (int c = 0; c < 8; ++c) {
-                if (c == 3) continue; // LFE has no angle
-                float d = std::fabs(AngDist(a.angle, kAngleDeg[c]));
-                if (d < bestD) { bestD = d; bestCh = c; }
-            }
-            uint8_t cls = bestCh >= 0 ? classes[bestCh] : SoundNone;
-            if (cls != SoundNone) {
+            uint8_t cls = classes[bestCh];
+            if (cls == SoundFootstep || cls == SoundGunshot) {
                 D2D1_MATRIX_3X2_F xform =
                     D2D1::Matrix3x2F::Rotation(a.angle, D2D1::Point2F(cx, cy));
                 rt->SetTransform(xform);
@@ -612,6 +625,9 @@ void DrawScene(ID2D1RenderTarget* rt, const SceneResources& res, const OverlayCo
     for (const auto& a : arrows) {
         float lvl = duckLevel(a.angle, a.strength);
         if (lvl <= 0.02f) continue;
+        if (cfg.hideImpact && classifyOn && classes &&
+            classes[NearestChannel(a.angle)] == SoundImpact)
+            continue;
         DrawCapsule(rt, res, cfg, a.angle, lvl, a.pulse, w, h, fx, timeSec);
     }
 }
@@ -856,13 +872,16 @@ void Overlay::ThreadMain(bool visible) {
         float sens = cfg_.sensitivity;
         if (sens < 0.5f) sens = 0.5f;
         if (sens > 4.0f) sens = 4.0f;
-        for (int c = 0; c < 8; ++c) {
-            frame.level[c] *= sens;
-            if (frame.level[c] > 1.0f) frame.level[c] = 1.0f;
-        }
+        for (int c = 0; c < 8; ++c) frame.level[c] *= sens;
         float maxLvl = 0.0f;
         for (int c = 0; c < 8; ++c) if (frame.level[c] > maxLvl) maxLvl = frame.level[c];
         bool active = frame.active || maxLvl > 0.02f;
+
+        // direction input: normalized so gain never clips the channel ratio
+        // (only rescales when the loudest channel exceeds 1.0)
+        float dirLevels[8];
+        float dirScale = maxLvl > 1.0f ? 1.0f / maxLvl : 1.0f;
+        for (int c = 0; c < 8; ++c) dirLevels[c] = frame.level[c] * dirScale;
 
         // direction estimation; mode = stereo-pan vs 8ch cluster
         uint64_t nowTick = GetTickCount64();
@@ -889,10 +908,10 @@ void Overlay::ThreadMain(bool visible) {
         }
 
         if (stereoMode_) {
-            if (active) tracker.UpdateStereo(frame.level[0], frame.level[1], dt, cfg_.arrowFadeMs);
+            if (active) tracker.UpdateStereo(dirLevels[0], dirLevels[1], dt, cfg_.arrowFadeMs);
             else tracker.UpdateStereo(0.0f, 0.0f, dt, cfg_.arrowFadeMs); // fade out
         } else if (active) {
-            tracker.Update(frame.level, cfg_.detectThreshold, dt, cfg_.frontMerge, cfg_.arrowFadeMs);
+            tracker.Update(dirLevels, cfg_.detectThreshold, dt, cfg_.frontMerge, cfg_.arrowFadeMs);
         } else {
             float zeros[8] = {};
             tracker.Update(zeros, cfg_.detectThreshold, dt, cfg_.frontMerge, cfg_.arrowFadeMs);

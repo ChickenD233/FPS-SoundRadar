@@ -24,6 +24,7 @@ struct OverlayConfig {
     int edgeLenPct = 100;     // edge-band length multiplier, percent (50-250)
     float detectThreshold = 0.03f;  // class-arrow detection threshold (was hardcoded 0.05)
     bool frontMerge = true;   // merge the two front FL/FR arrows into one
+    bool hideImpact = false;  // hide arrows classified as bullet impacts
     bool duckEnabled = true;  // attenuate front class arrows while own keys are held
     float duckFire = 0.85f;   // attenuation 0-1 while LMB is held
     float duckWalk = 0.65f;   // attenuation 0-1 while WASD is held
