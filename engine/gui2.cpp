@@ -683,7 +683,7 @@ void Gui::MeasureAndFit() {
     contentH = static_cast<int>(contentH * scale + 0.5);
     // fit inside the monitor work area (excludes the taskbar), 40px margin
     HMONITOR mon = MonitorFromWindow(hwnd_, MONITOR_DEFAULTTONEAREST);
-    MONITORINFOW mi = { sizeof(mi) };
+    MONITORINFO mi = { sizeof(mi) };
     GetMonitorInfoW(mon, &mi);
     int maxH = (mi.rcWork.bottom - mi.rcWork.top) - 40;
     if (contentH > maxH) contentH = maxH;
