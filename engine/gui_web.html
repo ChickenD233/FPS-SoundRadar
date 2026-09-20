@@ -83,9 +83,24 @@ body {
 .row label { width: 88px; color: var(--dim); flex: none; }
 /* One-line "which way to drag" note under a control. */
 .hint {
-  margin: -2px 0 8px 96px; color: #8a93a6; font-size: 10.5px; line-height: 1.45;
+  margin: -2px 0 8px 96px; color: #8a93a6; font-size: 11px; line-height: 1.45;
 }
-.hint b { color: var(--accent); font-weight: 600; }
+/* Polarity words. Every slider reads low -> high from left to right, so one
+   word keeps one color: 低 fluorescent blue, 高 amber. The same colors paint
+   the slider track and its two end labels. */
+:root {
+  --lo: #35d0ff;
+  --lo-dim: rgba(53, 208, 255, .4);
+  --hi: #ff9d2e;
+  --hi-dim: rgba(255, 157, 46, .4);
+}
+.hint b { font-weight: 600; font-size: inherit; }
+.hint b.lo { color: var(--lo); }
+.hint b.hi { color: var(--hi); }
+.slide { display: flex; align-items: center; gap: 6px; flex: 1; min-width: 0; }
+.slide .end { width: 12px; flex: none; font-size: 10.5px; font-weight: 600; text-align: center; }
+.slide .end.lo { color: var(--lo); }
+.slide .end.hi { color: var(--hi); }
 
 /* value pill */
 .val {
@@ -139,19 +154,20 @@ select:focus { border-color: var(--accent); }
 
 /* range: thin track, glowing 16px thumb */
 input[type=range] {
-  -webkit-appearance: none; appearance: none; flex: 1; min-width: 0; height: 4px; border-radius: 2px;
-  background: linear-gradient(90deg, var(--accent) var(--fill,50%), #2a3040 var(--fill,50%));
+  -webkit-appearance: none; appearance: none; flex: 1; min-width: 0; height: 6px; border-radius: 3px;
+  /* --map is built in JS: a low->high colour ramp, dimmed outside the thumb */
+  background: var(--map, linear-gradient(90deg, var(--lo), var(--hi)));
   outline: none; cursor: pointer;
 }
 input[type=range]::-webkit-slider-thumb {
   -webkit-appearance: none; appearance: none; width: 16px; height: 16px; border-radius: 50%;
-  background: #fff; border: 2px solid var(--accent);
-  box-shadow: 0 0 10px var(--accent-dim), 0 0 3px var(--accent-dim);
-  transition: transform .12s ease, box-shadow .12s ease;
+  background: #0f1117; border: 3px solid var(--thumb, var(--accent));
+  box-shadow: 0 0 10px var(--thumb-dim, var(--accent-dim)), 0 0 3px var(--thumb-dim, var(--accent-dim));
+  transition: transform .12s ease, box-shadow .12s ease, border-color .12s ease;
 }
 input[type=range]::-webkit-slider-thumb:hover {
   transform: scale(1.25);
-  box-shadow: 0 0 16px var(--accent), 0 0 4px var(--accent-dim);
+  box-shadow: 0 0 16px var(--thumb, var(--accent)), 0 0 4px var(--thumb-dim, var(--accent-dim));
 }
 input[type=range]:active::-webkit-slider-thumb { transform: scale(1.15); }
 
@@ -235,8 +251,8 @@ footer {
   <div class="row"><label class="tgl-label">显示声纹</label>
     <label class="tgl"><input type="checkbox" id="ovOn"><span class="tr"></span></label>
   </div>
-  <div class="row"><label>灵敏度</label><input type="range" id="sens" min="50" max="400" step="10"><span class="val" id="sensV"></span></div>
-  <div class="hint">声纹太暗/太小 → 调<b>高</b>；太亮刺眼 → 调<b>低</b>（默认 2.00x）</div>
+  <div class="row"><label>灵敏度</label><span class="slide"><span class="end lo">低</span><input type="range" id="sens" min="50" max="400" step="10"><span class="end hi">高</span></span><span class="val" id="sensV"></span></div>
+  <div class="hint">声纹太暗/太小 → 调<b data-p="hi">高</b>；太亮刺眼 → 调<b data-p="lo">低</b>（默认 2.50x）</div>
 </div>
 
 <div class="card">
@@ -251,6 +267,12 @@ footer {
 </div>
 
 <div id="pageAdv" hidden>
+<div class="card" style="padding:8px 14px">
+  <div class="hint" style="margin:0">
+    每个滑条都是左低右高：<b class="lo">低</b> 端是荧光蓝，<b class="hi">高</b> 端是橙色；
+    提示文字里相同的颜色，说的就是同一个方向。
+  </div>
+</div>
 <div class="card">
   <h2>配置 PRESETS</h2>
   <div class="row"><label>游戏预设</label><select id="preset">
@@ -267,35 +289,35 @@ footer {
 <div class="card">
   <h2>声纹样式 OVERLAY</h2>
   <h3>内圈 · 方向箭头 INNER ARROWS</h3>
-  <div class="row"><label>雷达大小</label><input type="range" id="radius" min="60" max="160" step="1"><span class="val" id="radiusV"></span></div>
-  <div class="hint">调<b>高</b>圆环更大、离中心更远；挡视野就调<b>低</b></div>
-  <div class="row"><label>位置X</label><input type="range" id="posX" min="-50" max="50" step="1"><span class="val" id="posXV"></span></div>
+  <div class="row"><label>雷达大小</label><span class="slide"><span class="end lo">低</span><input type="range" id="radius" min="60" max="160" step="1"><span class="end hi">高</span></span><span class="val" id="radiusV"></span></div>
+  <div class="hint">调<b data-p="hi">高</b>圆环更大、离中心更远；挡视野就调<b data-p="lo">低</b></div>
+  <div class="row"><label>位置X</label><span class="slide"><span class="end lo">低</span><input type="range" id="posX" min="-50" max="50" step="1"><span class="end hi">高</span></span><span class="val" id="posXV"></span></div>
   <div class="hint">负 = 左移，正 = 右移</div>
-  <div class="row"><label>位置Y</label><input type="range" id="posY" min="0" max="50" step="1"><span class="val" id="posYV"></span></div>
-  <div class="hint">调<b>高</b>圆环下移，准星被挡时用</div>
-  <div class="row"><label>渐隐时间</label><input type="range" id="fade" min="300" max="500" step="10"><span class="val" id="fadeV"></span></div>
-  <div class="hint">声音停止后消失的时间：调<b>低</b>更快，调<b>高</b>更久</div>
-  <div class="row"><label>指针残留</label><input type="range" id="afade" min="150" max="1200" step="50"><span class="val" id="afadeV"></span></div>
-  <div class="hint">追不上快速转身 → 调<b>低</b>；闪烁跳变 → 调<b>高</b></div>
+  <div class="row"><label>位置Y</label><span class="slide"><span class="end lo">低</span><input type="range" id="posY" min="0" max="50" step="1"><span class="end hi">高</span></span><span class="val" id="posYV"></span></div>
+  <div class="hint">调<b data-p="hi">高</b>圆环下移，准星被挡时用</div>
+  <div class="row"><label>渐隐时间</label><span class="slide"><span class="end lo">低</span><input type="range" id="fade" min="300" max="500" step="10"><span class="end hi">高</span></span><span class="val" id="fadeV"></span></div>
+  <div class="hint">声音停止后消失的时间：调<b data-p="lo">低</b>更快，调<b data-p="hi">高</b>更久</div>
+  <div class="row"><label>指针残留</label><span class="slide"><span class="end lo">低</span><input type="range" id="afade" min="150" max="1200" step="50"><span class="end hi">高</span></span><span class="val" id="afadeV"></span></div>
+  <div class="hint">追不上快速转身 → 调<b data-p="lo">低</b>；闪烁跳变 → 调<b data-p="hi">高</b></div>
   <h3>外圈 · 边缘条带 EDGE BANDS</h3>
-  <div class="row"><label>条带粗细</label><input type="range" id="edgeW" min="50" max="250" step="5"><span class="val" id="edgeWV"></span></div>
+  <div class="row"><label>条带粗细</label><span class="slide"><span class="end lo">低</span><input type="range" id="edgeW" min="50" max="250" step="5"><span class="end hi">高</span></span><span class="val" id="edgeWV"></span></div>
   <div class="hint">四边色带厚度，100% = 默认</div>
-  <div class="row"><label>条带长度</label><input type="range" id="edgeL" min="50" max="250" step="5"><span class="val" id="edgeLV"></span></div>
+  <div class="row"><label>条带长度</label><span class="slide"><span class="end lo">低</span><input type="range" id="edgeL" min="50" max="250" step="5"><span class="end hi">高</span></span><span class="val" id="edgeLV"></span></div>
   <div class="hint">色带沿边缘的长度，100% = 默认</div>
-  <div class="row"><label>特效强度</label><input type="range" id="fx" min="0" max="100" step="1"><span class="val" id="fxV"></span></div>
-  <div class="hint">光晕拖尾强度：嫌花就调<b>低</b>，0 = 朴素箭头</div>
-  <div class="row"><label>阈值 绿→黄</label><input type="range" id="low" min="5" max="95" step="1"><span class="val" id="lowV"></span></div>
-  <div class="hint">调<b>低</b>：小声音就变黄；调<b>高</b>：只有大声音变黄</div>
-  <div class="row"><label>阈值 黄→红</label><input type="range" id="high" min="5" max="95" step="1"><span class="val" id="highV"></span></div>
-  <div class="hint">调<b>低</b>：更多声纹变红；调<b>高</b>：只有很近才变红</div>
+  <div class="row"><label>特效强度</label><span class="slide"><span class="end lo">低</span><input type="range" id="fx" min="0" max="100" step="1"><span class="end hi">高</span></span><span class="val" id="fxV"></span></div>
+  <div class="hint">光晕拖尾强度：嫌花就调<b data-p="lo">低</b>，0 = 朴素箭头</div>
+  <div class="row"><label>阈值 绿→黄</label><span class="slide"><span class="end lo">低</span><input type="range" id="low" min="5" max="95" step="1"><span class="end hi">高</span></span><span class="val" id="lowV"></span></div>
+  <div class="hint">调<b data-p="lo">低</b>：小声音就变黄；调<b data-p="hi">高</b>：只有大声音变黄</div>
+  <div class="row"><label>阈值 黄→红</label><span class="slide"><span class="end lo">低</span><input type="range" id="high" min="5" max="95" step="1"><span class="end hi">高</span></span><span class="val" id="highV"></span></div>
+  <div class="hint">调<b data-p="lo">低</b>：更多声纹变红；调<b data-p="hi">高</b>：只有很近才变红</div>
 </div>
 
 <div class="card">
   <h2>检测 DETECTION</h2>
-  <div class="row"><label>检测门限</label><input type="range" id="dth" min="0" max="10" step="0.5"><span class="val" id="dthV"></span></div>
-  <div class="hint">显示箭头所需音量：调<b>低</b>更灵敏（可能误报）；调<b>高</b>只显示明确声音</div>
-  <div class="row"><label>分类能量门限</label><input type="range" id="cburst" min="1" max="15" step="0.5"><span class="val" id="cburstV"></span></div>
-  <div class="hint">脚步/枪声图标所需能量：调<b>低</b>更容易出现；调<b>高</b>只标明确声音</div>
+  <div class="row"><label>检测门限</label><span class="slide"><span class="end lo">低</span><input type="range" id="dth" min="0" max="10" step="0.5"><span class="end hi">高</span></span><span class="val" id="dthV"></span></div>
+  <div class="hint">显示箭头所需音量：调<b data-p="lo">低</b>更灵敏（可能误报）；调<b data-p="hi">高</b>只显示明确声音</div>
+  <div class="row"><label>分类能量门限</label><span class="slide"><span class="end lo">低</span><input type="range" id="cburst" min="1" max="15" step="0.5"><span class="end hi">高</span></span><span class="val" id="cburstV"></span></div>
+  <div class="hint">脚步/枪声图标所需能量：调<b data-p="lo">低</b>更容易出现；调<b data-p="hi">高</b>只标明确声音</div>
   <div class="row"><label class="tgl-label" style="width:auto">正前方融合</label>
     <label class="tgl"><input type="checkbox" id="fmerge"><span class="tr"></span></label>
   </div>
@@ -311,19 +333,19 @@ footer {
   <div class="row"><label class="tgl-label">启用</label>
     <label class="tgl"><input type="checkbox" id="duckOn"><span class="tr"></span></label>
   </div>
-  <div class="row"><label>开枪削弱</label><input type="range" id="duckFire" min="0" max="100" step="5"><span class="val" id="duckFireV"></span></div>
-  <div class="hint">按左键时正前方箭头淡多少：调<b>高</b>自己的枪声更不挡视线</div>
-  <div class="row"><label>走路削弱</label><input type="range" id="duckWalk" min="0" max="100" step="5"><span class="val" id="duckWalkV"></span></div>
-  <div class="hint">按 WASD 时正前方箭头淡多少：调<b>高</b>自己的脚步更不挡视线</div>
-  <div class="row"><label>衰减恢复</label><input type="range" id="duckRel" min="100" max="600" step="20"><span class="val" id="duckRelV"></span></div>
-  <div class="hint">松开按键后的恢复时间：调<b>低</b>更快，调<b>高</b>更久</div>
-  <div class="row"><label>前锥角</label><input type="range" id="duckCone" min="30" max="70" step="5"><span class="val" id="duckConeV"></span></div>
-  <div class="hint">抑制的正前方张角：调<b>高</b>影响到更偏侧面的箭头</div>
+  <div class="row"><label>开枪削弱</label><span class="slide"><span class="end lo">低</span><input type="range" id="duckFire" min="0" max="100" step="5"><span class="end hi">高</span></span><span class="val" id="duckFireV"></span></div>
+  <div class="hint">按左键时正前方箭头淡多少：调<b data-p="hi">高</b>自己的枪声更不挡视线</div>
+  <div class="row"><label>走路削弱</label><span class="slide"><span class="end lo">低</span><input type="range" id="duckWalk" min="0" max="100" step="5"><span class="end hi">高</span></span><span class="val" id="duckWalkV"></span></div>
+  <div class="hint">按 WASD 时正前方箭头淡多少：调<b data-p="hi">高</b>自己的脚步更不挡视线</div>
+  <div class="row"><label>衰减恢复</label><span class="slide"><span class="end lo">低</span><input type="range" id="duckRel" min="100" max="600" step="20"><span class="end hi">高</span></span><span class="val" id="duckRelV"></span></div>
+  <div class="hint">松开按键后的恢复时间：调<b data-p="lo">低</b>更快，调<b data-p="hi">高</b>更久</div>
+  <div class="row"><label>前锥角</label><span class="slide"><span class="end lo">低</span><input type="range" id="duckCone" min="30" max="70" step="5"><span class="end hi">高</span></span><span class="val" id="duckConeV"></span></div>
+  <div class="hint">抑制的正前方张角：调<b data-p="hi">高</b>影响到更偏侧面的箭头</div>
 </div>
 
 <div class="card">
   <h2>8 声道权重 WEIGHTS</h2>
-  <div class="hint" style="margin:0 0 6px">只作用于单声道模式。想某个方向更响就调<b>高</b>那格（100% = 原音量）</div>
+  <div class="hint" style="margin:0 0 6px">只作用于单声道模式。想某个方向更响就调<b data-p="hi">高</b>那格（100% = 原音量）</div>
   <div class="wgrid" id="wgrid"></div>
   <div class="btns" style="margin-top:6px"><button class="act ghost" id="resetW">重置 Reset</button></div>
 </div>
@@ -377,13 +399,59 @@ function setFill(el) {
   const pct = (el.value - el.min) / (el.max - el.min) * 100;
   el.style.setProperty('--fill', pct + '%');
 }
+
+/* Colour ramp for one slider: t=0 is the low end (fluorescent blue), t=1 the
+   high end (amber). okLCH keeps the ramp even; a plain HSL mix is the fallback
+   on a WebView2 build without oklch support. */
+const LO_HUE = 230, HI_HUE = 55;
+function mkMap(loHue, hiHue) {
+  const ok = window.CSS && CSS.supports && CSS.supports('color', 'oklch(0.5 0.1 200)');
+  return t => {
+    const h = loHue + (hiHue - loHue) * t;
+    if (ok) {
+      const L = 0.72 + 0.10 * t, C = 0.15 + 0.06 * t;
+      return { css: `oklch(${L.toFixed(3)} ${C.toFixed(3)} ${h.toFixed(1)})`,
+               glow: `oklch(${L.toFixed(3)} ${C.toFixed(3)} ${h.toFixed(1)} / .4)` };
+    }
+    return { css: `hsl(${h.toFixed(1)} 100% ${(58 + 6 * t).toFixed(1)}%)`,
+             glow: `hsla(${h.toFixed(1)}, 100%, 62%, .4)` };
+  };
+}
+function paintHint(root) {
+  root.querySelectorAll('.hint b[data-p]').forEach(b => {
+    b.classList.add(b.dataset.p === 'lo' ? 'lo' : 'hi');
+  });
+}
+function drawScale(el, map, pos) {
+  const t = (el.value - el.min) / (el.max - el.min);
+  const c = map(t);
+  const stops = [];
+  for (let i = 0; i < 17; i++) {
+    const u = i / 16, cc = map(u);
+    // dim everything left of the thumb only when --fill is used; here the whole
+    // ramp stays visible so the two ends keep their colours
+    stops.push(`${cc.css} ${(u * 100).toFixed(0)}%`);
+  }
+  el.style.background = `linear-gradient(90deg, ${stops.join(', ')})`;
+  el.style.setProperty('--thumb', c.css);
+  el.style.setProperty('--thumb-dim', c.glow);
+  void pos;
+}
 function bindSlider(id, fmt) {
   const el = $(id);
-  const show = () => { $(id + 'V').textContent = fmt(el.value); setFill(el); };
+  const map = mkMap(LO_HUE, HI_HUE);
+  const show = () => {
+    $(id + 'V').textContent = fmt(el.value);
+    setFill(el);
+    drawScale(el, map);
+  };
+  el._show = show;
+  el._map = map;
   el.addEventListener('input', show);
   el.addEventListener('change', () => { if (window.__instantApply) window.__instantApply(); });
-  el._show = show;
+  show();
 }
+paintHint(document);
 bindSlider('fade', v => v + ' ms');
 bindSlider('afade', v => v + ' ms');
 bindSlider('radius', v => v + ' px');
