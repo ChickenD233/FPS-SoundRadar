@@ -17,6 +17,11 @@ add_custom_target(embed_html ALL
     DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/gui_web_html.h)
 
 set(WEBVIEW2_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../tools/webview2/build/native)
+if(NOT EXISTS "${WEBVIEW2_DIR}/include/WebView2.h")
+    message(FATAL_ERROR
+        "WebView2 SDK not found at ${WEBVIEW2_DIR}.\n"
+        "Run: powershell -ExecutionPolicy Bypass -File scripts/fetch-webview2.ps1")
+endif()
 
 add_executable(SoundRadar
     main.cpp

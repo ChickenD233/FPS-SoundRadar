@@ -16,15 +16,10 @@ jobs:
 
       # engine/CMakeLists.txt expects the WebView2 NuGet package layout at
       # tools/webview2/build/native (headers + WebView2LoaderStatic.lib).
-      # The repo only carries the runtime bits, so fetch the same SDK version.
+      # The script below fetches the SDK and pins its version.
       - name: Fetch WebView2 SDK build/native
         shell: pwsh
-        run: |
-          $ver = "1.0.4191.47"
-          Invoke-WebRequest "https://www.nuget.org/api/v2/package/Microsoft.Web.WebView2/$ver" -OutFile "$env:TEMP\wv2.zip"
-          Expand-Archive "$env:TEMP\wv2.zip" "$env:TEMP\wv2pkg"
-          New-Item -ItemType Directory -Force tools\webview2\build | Out-Null
-          Copy-Item -Recurse -Force "$env:TEMP\wv2pkg\build\native" tools\webview2\build\
+        run: .\scripts\fetch-webview2.ps1
 
       - name: Configure
         run: cmake -S . -B build -G "Visual Studio 17 2022" -A x64

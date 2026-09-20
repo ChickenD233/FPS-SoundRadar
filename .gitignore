@@ -2,13 +2,14 @@ build/
 *.user
 *.suo
 .vs/
-tools/gh/gh_*/
-tools/gh/gh.zip
+dist/**/*.exe
+tools/webview2/
 driver/sysvad/**/x64/
 driver/sysvad/**/Release/
 driver/sysvad/**/Debug/
 *.cat
 *.zip
+*.obj
 tools/wdk-nuget/
 overlaytest.log
 overlaytest*.log

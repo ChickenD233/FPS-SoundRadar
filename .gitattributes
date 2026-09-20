@@ -4,13 +4,14 @@
 #
 # driver/sysvad/ is the Microsoft Windows-driver-samples sysvad virtual audio
 # driver sample (MS-PL, see driver/SYSVAD-LICENSE.txt and NOTICE). It is about
-# 425k lines across 276 files and it is vendored, not written here. Without
+# 59k lines across 117 files and it is vendored, not written here. Without
 # this file GitHub counts it as project code, and the language bar reads as if
 # this repository were a large multi-language driver project instead of a small
 # C++ engine plus one HTML page.
 #
-# driver/toolset-glue/ is likewise a build-time copy of Microsoft build glue,
-# and tools/ carries prebuilt binaries (WebView2 SDK files, gh.exe).
+# driver/toolset-glue/ is likewise a build-time copy of Microsoft build glue.
+# tools/ carries no binaries: the WebView2 SDK is fetched by
+# scripts/fetch-webview2.ps1 into the gitignored tools/webview2/.
 #
 # Marking a path linguist-vendored excludes it from the language bar and from
 # the statistics. The files stay in the repository, stay searchable, and stay

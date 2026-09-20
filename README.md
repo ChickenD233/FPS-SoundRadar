@@ -47,13 +47,16 @@ Game → SoundRadar VAD (virtual 7.1 driver) → loopback capture → SoundRadar
 
 ### Build
 
-Requirements: Windows 11 x64, VS2022 Build Tools (C++ workload), Windows SDK 10.0.26100, WDK 10.0.26100.6584.
+Requirements: Windows 11 x64, VS2022 Build Tools (C++ workload), Windows SDK 10.0.26100, WDK 10.0.26100.6584, Python 3 on PATH (the HTML UI is embedded at build time).
 
 ```
-powershell -ExecutionPolicy Bypass -File scripts\build-driver.ps1   # driver package
-cmake -S . -B build -G "Visual Studio 17 2022" -A x64               # engine + overlay
+powershell -ExecutionPolicy Bypass -File scripts\build-driver.ps1    # driver package
+powershell -ExecutionPolicy Bypass -File scripts\fetch-webview2.ps1  # WebView2 SDK headers + static loader
+cmake -S . -B build -G "Visual Studio 17 2022" -A x64                # engine + overlay
 cmake --build build --config Release
 ```
+
+`fetch-webview2.ps1` downloads the WebView2 SDK into the gitignored `tools/webview2/`. CMake stops with that command in the error text when the SDK is absent.
 
 `build-driver.ps1` installs a small toolset glue on BuildTools-only machines (files in `driver/toolset-glue/`), builds the driver, stamps the INF, and generates the catalog in `build/driver/Package/`.
 
@@ -146,13 +149,16 @@ FPS-SoundRadar 提供两个功能：
 
 ### 构建
 
-环境要求：Windows 11 x64、VS2022 Build Tools（C++ 工作负载）、Windows SDK 10.0.26100、WDK 10.0.26100.6584。
+环境要求：Windows 11 x64、VS2022 Build Tools（C++ 工作负载）、Windows SDK 10.0.26100、WDK 10.0.26100.6584、PATH 中有 Python 3（构建时内嵌 HTML 界面）。
 
 ```
-powershell -ExecutionPolicy Bypass -File scripts\build-driver.ps1   # 驱动包
-cmake -S . -B build -G "Visual Studio 17 2022" -A x64               # 引擎 + Overlay
+powershell -ExecutionPolicy Bypass -File scripts\build-driver.ps1    # 驱动包
+powershell -ExecutionPolicy Bypass -File scripts\fetch-webview2.ps1  # WebView2 SDK 头文件 + 静态加载器
+cmake -S . -B build -G "Visual Studio 17 2022" -A x64                # 引擎 + Overlay
 cmake --build build --config Release
 ```
+
+`fetch-webview2.ps1` 把 WebView2 SDK 下载到已被 gitignore 的 `tools/webview2/`。SDK 缺失时 CMake 会直接报错，并在错误信息里给出这条命令。
 
 `build-driver.ps1` 会在只有 BuildTools 的机器上自动补装驱动工具集胶水（文件在 `driver/toolset-glue/`)，然后构建驱动、打 INF 时间戳、生成目录文件，输出在 `build/driver/Package/`。
 
