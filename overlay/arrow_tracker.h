@@ -144,9 +144,35 @@ public:
                 }
             }
             if (fi >= 0) {
-                peaks[fi].angle = 0.0f; // the pair sits dead ahead
-                peaks[fi].snap = true;  // and reaches it in one frame, no glide
+                // Both front channels carry energy. When they are close in
+                // level (within about 5 dB) the pair reads as one source dead
+                // ahead, and the merged arrow snaps there: a 50 ms glide would
+                // leave it visibly left or right, which reads as a wrong
+                // direction. When one channel dominates, the pair is treated as
+                // one source on its way across the front, and the arrow follows
+                // the energy-weighted angle instead of sitting at dead ahead
+                // while the sound is already to the side. The angle it reaches
+                // is the angle the cluster tracker would draw with the merge
+                // off, so the takeover rule below can still snap it across.
+                const float ea = peaks[fi].energy;
+                const float eb = peaks[fj].energy;
+                const float lo = ea < eb ? ea : eb;
+                const float hi = ea < eb ? eb : ea;
+                if (hi > 0.0f && lo > 0.5f * hi) {
+                    peaks[fi].angle = 0.0f; // one source dead ahead
+                } else {
+                    const double ra = peaks[fi].angle * kPiF / 180.0;
+                    const double rb = peaks[fj].angle * kPiF / 180.0;
+                    const double sx = ea * std::sin(ra) + eb * std::sin(rb);
+                    const double sy = ea * std::cos(ra) + eb * std::cos(rb);
+                    peaks[fi].angle = ArrowNormAngle(
+                        static_cast<float>(std::atan2(sx, sy)) * 180.0f / kPiF);
+                }
+                peaks[fi].snap = true; // reaches it in one frame, no glide
                 if (peaks[fj].energy > peaks[fi].energy) peaks[fi].energy = peaks[fj].energy;
+                // The merged arrow carries the louder channel, so the takeover
+                // test above compares against the right owner.
+                peaks[fi].ch = (eb > ea) ? peaks[fj].ch : peaks[fi].ch;
                 peaks[fj] = peaks[--nPeaks];
             }
         }
@@ -156,6 +182,7 @@ public:
         for (auto& ar : arrows_) ar.matched = false;
         for (int p = 0; p < nPeaks; ++p) {
             int best = -1;
+            int strongArrow = -1; // arrow this peak may take over by strength
             float bestD = 60.0f;
             for (size_t k = 0; k < arrows_.size(); ++k) {
                 if (arrows_[k].matched) continue;
@@ -166,8 +193,19 @@ public:
                 // the view leaves the old arrow behind next to the new one.
                 const int oc = arrows_[k].ownerCh;
                 const bool ownerQuiet = (oc < 0) || (oc < 8 && levels[oc] < minLevel);
-                if (!ownerQuiet && oc >= 0 && peaks[p].ch >= 0 && oc != peaks[p].ch &&
-                    bestD > 40.0f)
+                // Second exception: the new channel is clearly stronger than the
+                // old owner. A source that steps from one wave channel to the
+                // next (FL to FR, FL to SL) leaves the old level decaying on its
+                // envelope release; without this rule the arrow sat on the old
+                // bearing for about 300 ms, which reads as "the pointer does not
+                // follow the sound". The 1.5x test keeps a genuine second source
+                // (a quieter one, 30 dB down) from stealing the arrow.
+                const bool stronger = oc >= 0 && oc < 8 && peaks[p].ch >= 0 &&
+                                      oc != peaks[p].ch &&
+                                      peaks[p].energy > 1.5f * levels[oc];
+                if (stronger) strongArrow = static_cast<int>(k);
+                if (!ownerQuiet && !stronger && oc >= 0 && peaks[p].ch >= 0 &&
+                    oc != peaks[p].ch && bestD > 40.0f)
                     bestD = 40.0f;
                 float d = std::fabs(ArrowAngDist(peaks[p].angle, arrows_[k].angle));
                 if (d < bestD) { bestD = d; best = static_cast<int>(k); }
@@ -178,8 +216,10 @@ public:
                 ar.ownerCh = peaks[p].ch;
                 ar.trail1 = ar.trail0;
                 ar.trail0 = ar.angle;
-                if (peaks[p].snap) {
-                    // A fused front pair jumps to dead ahead at once.
+                if (peaks[p].snap || best == strongArrow) {
+                    // A fused front pair, or a takeover by a clearly stronger
+                    // channel, jumps to the new bearing at once. A glide here
+                    // would leave the arrow visibly on the old direction.
                     ar.angle = peaks[p].angle;
                 } else {
                     ar.angle = ArrowNormAngle(ar.angle +

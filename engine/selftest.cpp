@@ -185,10 +185,12 @@ void TestMonoAllChannelsPresent() {
     Report("mono carries all 8 channels (Goertzel)", ok);
 }
 
-// 5) Silence fade: level must decay to <0.05 within fadeMs+100, not before fadeMs-100.
+// 5) Silence: the drawn level must drop away fast once the sound stops. The
+//    adaptive display releases over displayReleaseMs, so a stale arrow cannot
+//    sit on the ring after the sound is gone. (fade_ms stays the legacy
+//    fixed-threshold fade and no longer drives the adaptive display.)
 void TestFadeTiming() {
     AnalysisConfig acfg;
-    acfg.fadeMs = 400;
     Analyzer an(acfg);
 
     std::vector<float> burst;
@@ -205,11 +207,12 @@ void TestFadeTiming() {
         an.Process(silence.data(), 480, fr);
         if (fr.level[0] < 0.05f) { firstBelowMs = b * 10; break; }
     }
-    bool ok = burstOk && firstBelowMs >= acfg.fadeMs - 100 && firstBelowMs <= acfg.fadeMs + 100;
+    const int wantHi = static_cast<int>(acfg.displayReleaseMs) + 60;
+    bool ok = burstOk && firstBelowMs >= 0 && firstBelowMs <= wantHi;
     if (!ok)
-        std::printf("       burst level ok=%d, first <0.05 at %d ms (want %d..%d)\n",
-                    burstOk ? 1 : 0, firstBelowMs, acfg.fadeMs - 100, acfg.fadeMs + 100);
-    Report("silence fade timing (~fade_ms)", ok);
+        std::printf("       burst level ok=%d, first <0.05 at %d ms (want <= %d)\n",
+                    burstOk ? 1 : 0, firstBelowMs, wantHi);
+    Report("silence fade timing (display release)", ok);
 }
 
 // 6) Stereo downmix sanity: FL goes left, SR goes right, center splits.

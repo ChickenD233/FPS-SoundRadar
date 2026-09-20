@@ -16,6 +16,13 @@ struct AnalysisConfig {
     float releaseMs         = 90.0f;  // release while signal decays (lower = less lag)
     int   fadeMs            = 250;    // linear fade-to-zero once silence starts
     float smoothMs          = 12.0f;  // display one-pole smoothing (anti-flicker)
+    // Adaptive display release, in ms: the drawn level falls to the gate
+    // threshold this long after the sound stops. Short on purpose. The overlay
+    // arrow must leave when the sound leaves, and a long tail also kept the
+    // arrow tracker alive on a direction the sound had already left. 40 ms is
+    // about four 10 ms capture blocks, so a sustained sound still reads steady
+    // while a burst drops out at once.
+    float displayReleaseMs  = 40.0f;
     float silenceEps        = 1e-5f;  // block power below this counts as silence
     float peakThreshold     = 0.5f;   // level >= threshold -> peak flag
     float activityThreshold = 0.02f;  // any channel above -> global activity flag
@@ -29,13 +36,13 @@ struct AnalysisConfig {
     bool  detectAdaptive = true;   // false = legacy fixed-threshold behavior
     float detectFloorDb  = -46.0f; // target level for the measured noise floor
     float detectRangeDb  = 22.0f;  // detection headroom kept above the floor
-    // Display span, in dB above the measured ambient level. The displayed level
-    // reaches 1.0 at floor + displaySpanDb, which maps the color thresholds
-    // (overlay_low/high, default 0.08 / 0.30) to 2.4 dB / 9 dB above the
-    // ambience. The span follows the measured floor, so a quiet mix stays as
-    // visible as a loud one. An absolute dBFS reference was tried and reverted:
-    // at 40% game volume the arrows read almost black.
-    float displaySpanDb  = 30.0f;
+    // Display span, in dB above the channel gate. The displayed level is 0 at
+    // the gate threshold and 1.0 this many dB above it, so the color thresholds
+    // (overlay_low/high, default 0.08 / 0.30) map to 1.2 dB / 4.5 dB above the
+    // gate and the scale keeps its meaning at any game volume. An absolute dBFS
+    // reference was tried and reverted: at 40% game volume the arrows read
+    // almost black.
+    float displaySpanDb  = 20.0f;
     // Display gain from the sensitivity slider, compressed so the color scale
     // survives a 4x setting: sensGain = (sensitivity / 2)^displaySensExp.
     float displaySensExp = 0.6f;
@@ -56,7 +63,11 @@ struct AnalysisConfig {
     float gateMarginDb   = 4.0f;   // envelope must exceed floor + margin to open
     // 20 ms: two blocks. Long enough that an isolated noise block cannot draw,
     // short enough that the classifier still sees the onset of a short step.
-    int   gateHoldMs     = 20;     // gate must stay open this long before it counts
+    // Retained for source compatibility. The gate hold timer is gone: it reset
+    // to zero as soon as the block rms fell below the gate, which put 20 ms on
+    // every onset and cut a hole in the fade tail while the gate's own hang was
+    // still open. The gate is now validated by gateHangMs alone.
+    int   gateHoldMs     = 0;
     int   gateHangMs     = 100;    // keep the gate open this long after a burst
     // Deadlock escape: if the whole window is loud (audio starts inside loud
     // content), no block can clear the threshold and the gate would stay shut
@@ -120,7 +131,8 @@ private:
     size_t fadeN_;  // fade length in samples
 
     float env_[kAnalysisChannels];      // power envelope
-    float disp_[kAnalysisChannels];     // displayed level
+    float disp_[kAnalysisChannels];     // displayed level, legacy fixed-threshold path
+    float dispLevel_[kAnalysisChannels]; // displayed level, adaptive path (gate-relative)
     float freeze_[kAnalysisChannels];   // level frozen at silence onset
     size_t silent_[kAnalysisChannels];  // consecutive silent samples
     // adaptive detection state
@@ -133,7 +145,6 @@ private:
     float detEnv_[kAnalysisChannels];   // gate decision envelope, rms
     bool  gate_[kAnalysisChannels];     // per-channel gate latch
     int   hang_[kAnalysisChannels];     // gate hang left, in samples
-    int   hold_[kAnalysisChannels];     // continuous open time, in samples
     size_t silentBlocks_[kAnalysisChannels] = {}; // continuous closed-gate time, samples
     float gainLin_ = 1.0f;              // published gain for the classifier
     float burstRms_ = 0.0f;             // highest per-channel burst threshold

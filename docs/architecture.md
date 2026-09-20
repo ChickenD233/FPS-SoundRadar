@@ -33,7 +33,9 @@ Game → Windows audio engine → SoundRadar VAD render pin (8ch PCM)
 - 8 channels map to 8 fixed directions: FL FR C LFE BL BR SL SR.
 - Each channel owns one radar sector and one edge-band segment. Levels never merge. Two loud channels at once show two sectors, never a phantom center.
 - Color by relative loudness: cyan→teal below the low threshold (far/weak), teal→amber up to the high threshold, amber→red above (near/loud). Thresholds are configurable.
-- After a sound stops, the sector fades out over 300–500 ms. A one-pole smoothing filter stops flicker.
+- The drawn level is the signal above the channel gate: 0 at the threshold, 1.0 at 20 dB above it. Quiet ambience reads 0. The overlay draws nothing from noise.
+- The channel gate opens on the first 10 ms block of a step and holds 60 ms. The drawn level attacks in one block and releases over about 40 ms.
+- After a sound stops, the arrow fades out and leaves within about 150 ms. The `fade_ms` setting is the legacy fixed-threshold fade and no longer drives the adaptive display.
 
 ### Latency budget (end to end ≤ 30 ms)
 

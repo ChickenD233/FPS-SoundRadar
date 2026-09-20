@@ -31,9 +31,9 @@ Game → SoundRadar VAD (virtual 7.1 driver) → loopback capture → SoundRadar
 - A control the user touched keeps the user's value. The app pushes its stored state to the window twice a second; before this, that packet overwrote anything not yet applied, so a switch flipped back and a number field reverted while the user was still editing it.
 - Every slider reads low to high from left to right. The two ends carry the words 低 and 高 in fluorescent blue and amber, the track shows the same ramp, and the hint under the slider uses those colors on the same words. The readable cue and the text cue cannot disagree. The sensitivity slider sets arrow brightness and how soon the color turns red. The detection threshold decides what gets detected. The color scale is relative to the measured ambient level, so a quiet mix stays visible instead of reading black.
 - Noise gate. Ambient hiss and fan noise produce no arrows and no glow, so a direction indicator always means real sound.
-- Frontal merge. With the merge toggle on, the front-left and front-right pair always draws ONE arrow dead ahead, even when the two channels differ in level.
-- Fast release. Arrows reach zero 300-700 ms after the sound stops, so no mark lingers over an empty scene.
-- 50 ms arrow glide, 250 ms display fade, 120 ms noise-gate release. No flicker.
+- Frontal merge. With the merge toggle on, the front-left and front-right pair draws ONE arrow. The two channels within 5 dB of each other put it dead ahead; one clearly louder channel moves it toward that side, so a source crossing the front is followed instead of frozen at center.
+- The drawn level is the signal above the channel gate, so quiet ambience reads 0 and draws nothing. The gate opens on the first 10 ms block of a step and holds 60 ms.
+- Fast release. An arrow reaches zero about 150 ms after the sound stops, and a source that steps to the next wave channel is followed within about 65 ms. Measured on the host harness (`engine/tests/sr_latency.cpp`).
 - Overlay refresh: up to ~120 fps while sound is present, ~4 fps when idle.
 - `SoundRadar.exe --sselftest` runs the detection tests (quiet mix, noise rejection, fade, recovery) without audio devices.
 - Overlay: topmost, fully click-through, never steals focus. CPU under 5% while active, near zero when idle.
@@ -130,9 +130,9 @@ FPS-SoundRadar 提供两个功能：
 - 用户刚改过的控件以用户的值为准。程序每秒两次把已保存的状态推给界面；在此之前这个状态包会覆盖尚未应用的内容，导致开关自己弹回、数字字段在编辑时被改回。
 - 每个滑块都是左低右高：两端标注"低"和"高"，分别是荧光蓝和橙色；轨道是同一条渐变色，滑块下面的提示里同名文字用同一颜色，颜色和文字不会互相矛盾。灵敏度滑块决定箭头亮度和多久变红；能否检测到声音由"检测门限"决定。颜色刻度相对实测环境噪声底，所以低音量混音也能看清，不会一片漆黑。
 - 噪声门。环境底噪和风扇声不会画出箭头、也不会发光，所以出现声纹就一定代表真实声音。
-- 正前方融合。开启融合开关后，左前+右前永远只画一个正前方箭头，两声道音量不一致时也一样。
-- 快速消失。声音停止后 300–700 ms 内声纹归零，不会在空场景上残留。
-- 50 ms 箭头滑动、250 ms 显示渐隐、120 ms 噪声门释放，防闪烁。
+- 正前方融合。开启融合开关后，左前+右前只画一个箭头：两声道相差 5 dB 以内时指向正前方，一侧明显更响时箭头跟随更响的一侧，所以横穿正前方的声源会被跟上，而不是卡在正前方。
+- 显示电平是"高于声道门限的那部分信号"，所以安静的环境底噪读数为 0，不会画出任何东西。门限在脚步的第一个 10 ms 数据块就打开，并保持 60 ms。
+- 快速消失。声音停止后约 150 ms 箭头归零；声源换到相邻声道后约 65 ms 箭头跟上。以上为主机测试台（`engine/tests/sr_latency.cpp`）实测值。
 - Overlay 刷新率：有声时最高约 120 fps，空闲约 4 fps。
 - `SoundRadar.exe --sselftest` 无需音频设备即可运行检测测试（轻音混音、噪声抑制、渐隐、恢复）。
 - Overlay 置顶、完全点击穿透、不抢焦点。工作时 CPU 低于 5%，空闲接近零。

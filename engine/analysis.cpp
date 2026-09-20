@@ -35,11 +35,11 @@ void Analyzer::SetConfig(const AnalysisConfig& cfg) {
 void Analyzer::Reset() {
     std::memset(env_, 0, sizeof(env_));
     std::memset(disp_, 0, sizeof(disp_));
+    std::memset(dispLevel_, 0, sizeof(dispLevel_));
     std::memset(freeze_, 0, sizeof(freeze_));
     std::memset(silent_, 0, sizeof(silent_));
     std::memset(gate_, 0, sizeof(gate_));
     std::memset(hang_, 0, sizeof(hang_));
-    std::memset(hold_, 0, sizeof(hold_));
     for (int c = 0; c < kAnalysisChannels; ++c) {
         floorDb_[c] = kFloorInitDb;
         detEnv_[c] = 0.0f;
@@ -65,8 +65,11 @@ void Analyzer::Process(const float* in8, size_t frames, AnalysisFrame& out) {
             env_[c] += a * (p - env_[c]);
             if (FCmpGt(p, blockPeak[c])) blockPeak[c] = p;
             blockSumSq[c] += p;
+            // Display smoothing, per sample, for the legacy fixed-threshold
+            // display only. The adaptive display reads the block rms instead, so
+            // it can react in one block at onset and fall away in a few blocks
+            // when the sound stops.
             if (silent_[c] == 0) {
-                // display smoothing (anti-flicker), per sample
                 float lvl = std::sqrt(env_[c]);
                 disp_[c] += smA_ * (lvl - disp_[c]);
             }
@@ -122,16 +125,14 @@ void Analyzer::Process(const float* in8, size_t frames, AnalysisFrame& out) {
     // Display gain and detection gain are separate on purpose.
     //   gainLin_ (from the noise floor) feeds classify and the gate, so a quiet
     //     mix is still detected.
-    //   dispGain normalizes the display against the floor plus the detection
-    //     headroom (detectRangeDb), so an audible-but-quiet step still draws a
-    //     bright arrow, and the color matches the level above the ambience.
-    //   The sensitivity slider is NOT part of either one. Scaling the display
-    //     by it made 4x push every arrow into the red band, which destroyed the
-    //     far/near color grading without improving detection.
-    // The display reads "how far above the ambience", so a quiet mix stays
-    // visible. The sensitivity slider then scales that display, compressed so
-    // 4x does not push every arrow into the red band.
-    const float dispRefRms = std::pow(10.0f, (priorFloor + cfg_.displaySpanDb) / 20.0f);
+    //   The displayed level reads "how far above the channel gate". The gate
+    //     threshold is the ambience, so the display is black for ambience and
+    //     bright for a step at any captured volume. An earlier version divided
+    //     the envelope by the measured floor instead: ambience then read about
+    //     0.8 of full scale, which made the color scale meaningless and drew
+    //     arrows from noise alone.
+    //   The sensitivity slider scales the displayed level, compressed so 4x
+    //     does not push every arrow into the red band.
     const float sens = FCmpLt(cfg_.detectSensitivity, 0.1f) ? 0.1f : cfg_.detectSensitivity;
     const float dispSens = std::pow(sens / 2.0f, cfg_.displaySensExp);
 
@@ -139,6 +140,19 @@ void Analyzer::Process(const float* in8, size_t frames, AnalysisFrame& out) {
     const float burstMarginLin = std::pow(10.0f, cfg_.burstMarginDb / 20.0f);
     const float safety = std::pow(10.0f, cfg_.detectMinGainDb / 20.0f);
     const float kneeDb = 4.0f; // soft-open width below the gate threshold
+    // Level above the gate that reads as full scale (displaySpanDb, default
+    // 20 dB), so the color bands (overlay_low 0.08, overlay_high 0.30) sit
+    // 1.2 dB and 4.5 dB above the gate and a loud step still reaches the red
+    // band.
+    const float dispFullDb = FCmpLt(cfg_.displaySpanDb, 6.0f) ? 6.0f : cfg_.displaySpanDb;
+    // Display response, in blocks. Attack one block (10 ms): the first block of
+    // a step shows at once. Release a few blocks (~40 ms): a sustained sound
+    // reads steady, and the level is down to the gate threshold about 40 ms
+    // after the sound stops. The overlay then fades the arrow over its own
+    // arrowFadeMs, so a decaying tail must not keep the level up for 250 ms.
+    const float dispAttA = 1.0f - std::exp(-msPerBlock / 10.0f);
+    const float dispRelA =
+        1.0f - std::exp(-msPerBlock / (cfg_.displayReleaseMs > 1.0f ? cfg_.displayReleaseMs : 1.0f));
 
     out.active = false;
     out.gateOpen = false;
@@ -207,7 +221,6 @@ void Analyzer::Process(const float* in8, size_t frames, AnalysisFrame& out) {
         // loses that onset. Both measures are window energies, so ambient noise
         // cannot open the gate by spiking.
         const bool above = FCmpGe(rms, openAt) || FCmpGe(env, openAt);
-        const bool onset = FCmpGe(rms, openAt);
         // The gate needs no warmup: the window minimum is valid from block 1.
         if (!cfg_.detectAdaptive) {
             gate_[c] = FCmpGe(blockPeak[c], cfg_.silenceEps);
@@ -219,14 +232,15 @@ void Analyzer::Process(const float* in8, size_t frames, AnalysisFrame& out) {
         }
         if (gate_[c] && above)
             hang_[c] = static_cast<int>(cfg_.gateHangMs * 0.001f * cfg_.sampleRate);
-        // The hold counts the block test only: the envelope decays slowly and
-        // would otherwise keep the hold satisfied through a long tail.
-        if (gate_[c] && onset) hold_[c] += static_cast<int>(frames);
-        else hold_[c] = 0;
-        // A gate that only just flickers open on noise must not draw. Require
-        // gateHoldMs of continuous evidence before the channel reports sound.
-        const bool live = gate_[c] &&
-                          hold_[c] >= static_cast<int>(cfg_.gateHoldMs * 0.001f * cfg_.sampleRate);
+        // No second validation timer. The old gate hold required gateHoldMs of
+        // continuous block evidence before the channel counted as live, but that
+        // timer and the hang fight each other: once the sound stops the block
+        // test goes false, the timer resets to zero, and the channel went silent
+        // in the middle of its own fade tail. It also put 20 ms on every onset,
+        // because the displayed level was frozen at zero until the timer was
+        // satisfied. The gate is already hysteresis (gateHangMs), and both of its
+        // inputs are window energies, so a single noise block cannot open it.
+        const bool live = gate_[c];
 
         const bool silent = (!cfg_.detectAdaptive && FCmpLt(blockPeak[c], cfg_.silenceEps)) ||
                             (cfg_.detectAdaptive && !live);
@@ -245,18 +259,29 @@ void Analyzer::Process(const float* in8, size_t frames, AnalysisFrame& out) {
         float lvl;
         if (!cfg_.detectAdaptive) {
             lvl = disp_[c];
-        } else if (!live) {
-            // Gated out: ambient hiss must not glow on the overlay at all.
-            lvl = 0.0f;
         } else {
-            // Soft-open ramp: a level that only just clears the gate fades in
-            // from zero instead of snapping on.
+            // Signal above the channel gate, in units of the gate threshold.
+            // The soft-open ramp runs from half the gate threshold (kneeDb
+            // below it) to the gate threshold, then dispFullDb above the gate
+            // is full scale. A loud step clamps at 1.0; a step just above the
+            // ambience still reads about 0.4 and draws.
             const float knee = openAt * std::pow(10.0f, -kneeDb / 20.0f);
-            float soft = FCmpGe(env, openAt) ? 1.0f
-                                         : (rms - knee) / (openAt - knee + 1e-12f);
+            float soft = (rms - knee) / (openAt - knee + 1e-12f);
             if (FCmpLt(soft, 0.0f)) soft = 0.0f;
-            lvl = (disp_[c] / dispRefRms) * dispSens * soft;
-            if (FCmpGt(lvl, 1.0f)) lvl = 1.0f;
+            if (FCmpGt(soft, 1.0f)) soft = 1.0f;
+            const float exc = FCmpGt(rms, openAt) ? (rms / openAt) : 1.0f;
+            float target = (exc - 1.0f) * std::pow(10.0f, dispFullDb / gateMargin) * soft;
+            target *= dispSens;
+            if (FCmpGt(target, 1.0f)) target = 1.0f;
+            // Block-level smoothing with a fast attack and a short release.
+            // The old display reused disp_, which the per-sample loop smoothed
+            // while the channel was not silent: that value was frozen at zero
+            // through the gate hold at onset, so the drawn level crawled up over
+            // ~100 ms while the sound was already there.
+            const float a = FCmpGt(target, dispLevel_[c]) ? dispAttA : dispRelA;
+            dispLevel_[c] += a * (target - dispLevel_[c]);
+            if (FCmpLt(dispLevel_[c], 1e-4f)) dispLevel_[c] = 0.0f;
+            lvl = dispLevel_[c];
         }
         out.level[c] = lvl;
         out.peak[c] = FCmpGe(lvl, cfg_.peakThreshold);
