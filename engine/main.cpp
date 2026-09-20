@@ -81,7 +81,7 @@ bool EnsureSingleInstance() {
 
 void PrintUsage() {
     std::printf(
-        "SoundRadar - 7.1 capture, metering, right-mono/stereo downmix, overlay\n"
+        "SoundRadar - 7.1 capture, metering, stereo/left-mono/right-mono downmix, overlay\n"
         "\n"
         "usage: SoundRadar.exe [options]\n"
         "  (no args)              main window + tray + engine\n"
@@ -101,7 +101,7 @@ void PrintUsage() {
         "  --set-default          make the capture device's render twin the default output\n"
         "  --list-devices         list capture and render endpoints\n"
         "  --output <name>        render endpoint name substring\n"
-        "  --mode <m>             right-mono | stereo (overrides config)\n"
+        "  --mode <m>             stereo | right-mono | left-mono (overrides config)\n"
         "  --config <path>        config file (default %%APPDATA%%\\SoundRadar\\config.json)\n"
         "  --help                 this text\n");
 }
@@ -172,6 +172,7 @@ struct Pipeline {
             std::lock_guard<std::mutex> lk(meters->mu);
             meters->srcChannels = cap_->GetFormat().channels;
         }
+        sr::g_downmixMode.store(static_cast<int>(cfg.downmix.mode));
         sr::Log("pipeline: capture=%s render=%s (%s)",
                 sr::ToUtf8(capName).c_str(), sr::ToUtf8(renName).c_str(),
                 exclusive ? "exclusive" : "shared");
@@ -402,6 +403,7 @@ int RunApp(sr::AppConfig& cfg, const std::wstring& configPath, bool trayMode,
             std::lock_guard<std::mutex> lk(sr::g_downmix.mu);
             sr::g_downmix.cfg.mode = static_cast<sr::DownmixMode>(m);
         }
+        sr::g_downmixMode.store(m); // the overlay reads this to gate pan tracking
         cfg.downmix.mode = static_cast<sr::DownmixMode>(m);
         sr::SaveConfig(configPath, cfg);
     };
@@ -1612,9 +1614,10 @@ int wmain(int argc, wchar_t** argv) {
     if (!outputOverride.empty()) cfg.outputDevice = outputOverride;
     if (!modeOverride.empty()) {
         if (modeOverride == L"right-mono") cfg.downmix.mode = sr::DownmixRightMono;
+        else if (modeOverride == L"left-mono") cfg.downmix.mode = sr::DownmixLeftMono;
         else if (modeOverride == L"stereo") cfg.downmix.mode = sr::DownmixStereo;
         else {
-            fwprintf(stderr, L"--mode must be right-mono or stereo\n");
+            fwprintf(stderr, L"--mode must be stereo, right-mono, or left-mono\n");
             return 1;
         }
     }

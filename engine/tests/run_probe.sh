@@ -4,5 +4,5 @@
 set -e
 dir=$(dirname "$0")
 out="${TMPDIR:-/tmp}/sr_probe"
-c++ -std=c++17 -O2 -o "$out" "$dir/sr_probe.cpp" "$dir/../analysis.cpp" "$dir/../classify.cpp"
+c++ -std=c++17 -O2 -o "$out" "$dir/sr_probe.cpp" "$dir/../analysis.cpp" "$dir/../classify.cpp" "$dir/../downmix.cpp"
 exec "$out" "$@"

@@ -115,10 +115,11 @@ void TestChannelIndependence() {
     Report("channel independence (FL+BR, no center merge)", ok);
 }
 
-// 3) RIGHT_MONO: right out = weighted sum (per channel), left out = 0.
-void TestRightMonoPerChannel() {
+// 3) Mono modes: the active ear gets the weighted sum, the other stays silent.
+void TestMonoPerChannel(DownmixMode mode, const char* name) {
     DownmixConfig cfg; // default weights
-    cfg.mode = DownmixRightMono;
+    cfg.mode = mode;
+    const bool right = (mode == DownmixRightMono);
     bool ok = true;
     const size_t frames = 4800; // 100 ms, Goertzel bin width 10 Hz
     for (int ch = 0; ch < kChannels; ++ch) {
@@ -127,26 +128,27 @@ void TestRightMonoPerChannel() {
         std::vector<float> in, out(frames * 2);
         SynthSingle(in, frames, ch, freq, amp);
         Downmix8To2(in.data(), out.data(), frames, cfg);
-        std::vector<float> right = ChannelOf(out, 1);
-        std::vector<float> left = ChannelOf(out, 0);
-        double got = GoertzelAmp(right.data(), frames, freq);
+        std::vector<float> active = ChannelOf(out, right ? 1 : 0);
+        std::vector<float> quiet = ChannelOf(out, right ? 0 : 1);
+        double got = GoertzelAmp(active.data(), frames, freq);
         double want = amp * cfg.weights[ch];
-        double lmax = 0.0;
-        for (float v : left) lmax = std::max(lmax, static_cast<double>(std::fabs(v)));
-        bool chOk = std::fabs(got - want) / want < 0.03 && lmax == 0.0;
+        double qmax = 0.0;
+        for (float v : quiet) qmax = std::max(qmax, static_cast<double>(std::fabs(v)));
+        bool chOk = std::fabs(got - want) / want < 0.03 && qmax == 0.0;
         if (!chOk) {
-            std::printf("       ch %d: right amp %.4f (want %.4f), left max %.6f\n",
-                        ch, got, want, lmax);
+            std::printf("       ch %d: active amp %.4f (want %.4f), silent max %.6f\n",
+                        ch, got, want, qmax);
             ok = false;
         }
     }
-    Report("right-mono weighted sum per channel", ok);
+    Report(name, ok);
 }
 
-// 4) 8 distinct-frequency sines, one per channel: all present in right output.
-void TestRightMonoAllChannelsPresent() {
+// 4) 8 distinct-frequency sines, one per channel: all present in the active ear.
+void TestMonoAllChannelsPresent(DownmixMode mode, const char* name) {
     DownmixConfig cfg;
-    cfg.mode = DownmixRightMono;
+    cfg.mode = mode;
+    const bool right = (mode == DownmixRightMono);
     const size_t frames = 4800;
     const double amp = 0.05; // small enough that the tanh soft-clip stays ~linear
     std::vector<float> in(frames * kChannels, 0.0f);
@@ -159,24 +161,24 @@ void TestRightMonoAllChannelsPresent() {
     }
     std::vector<float> out(frames * 2);
     Downmix8To2(in.data(), out.data(), frames, cfg);
-    std::vector<float> right = ChannelOf(out, 1);
+    std::vector<float> active = ChannelOf(out, right ? 1 : 0);
 
     bool ok = true;
     for (int ch = 0; ch < kChannels; ++ch) {
         double freq = 300.0 + 100.0 * ch;
-        double got = GoertzelAmp(right.data(), frames, freq);
+        double got = GoertzelAmp(active.data(), frames, freq);
         double want = amp * cfg.weights[ch];
         if (std::fabs(got - want) / want > 0.08) {
             std::printf("       %.0f Hz: amp %.4f (want %.4f)\n", freq, got, want);
             ok = false;
         }
     }
-    double absent = GoertzelAmp(right.data(), frames, 2000.0); // not in the mix
+    double absent = GoertzelAmp(active.data(), frames, 2000.0); // not in the mix
     if (absent > 0.005) {
         std::printf("       2000 Hz (absent): amp %.4f\n", absent);
         ok = false;
     }
-    Report("right-mono carries all 8 channels (Goertzel)", ok);
+    Report(name, ok);
 }
 
 // 5) Silence fade: level must decay to <0.05 within fadeMs+100, not before fadeMs-100.
@@ -277,8 +279,10 @@ int RunSelfTest() {
     std::printf("SoundRadar engine self-test (no audio devices required)\n\n");
     TestChannelIsolation();
     TestChannelIndependence();
-    TestRightMonoPerChannel();
-    TestRightMonoAllChannelsPresent();
+    TestMonoPerChannel(DownmixRightMono, "right-mono weighted sum per channel");
+    TestMonoPerChannel(DownmixLeftMono, "left-mono weighted sum per channel");
+    TestMonoAllChannelsPresent(DownmixRightMono, "right-mono carries all 8 channels");
+    TestMonoAllChannelsPresent(DownmixLeftMono, "left-mono carries all 8 channels");
     TestFadeTiming();
     TestStereoDownmix();
     TestConfigRoundTrip();

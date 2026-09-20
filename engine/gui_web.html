@@ -208,6 +208,12 @@ footer {
   <h2>设备 DEVICES</h2>
   <div class="row"><label>输入/捕获</label><select id="selIn"></select></div>
   <div class="row"><label>输出</label><select id="selOut"></select></div>
+  <div class="row"><label>下混模式</label>
+    <select id="selMode">
+      <option value="stereo">7.1 立体声（全景声）</option>
+      <option value="right-mono">右耳单声道 Right-Mono</option>
+      <option value="left-mono">左耳单声道 Left-Mono</option>
+    </select></div>
   <div class="row"><label></label><button class="act ghost" id="btnSetDefault" style="flex:1">设为默认输出（系统声音走该设备）</button></div>
 </div>
 
@@ -362,7 +368,14 @@ bindSlider('duckRel', v => v + ' ms');
 bindSlider('duckCone', v => v + '°');
 for (let i = 0; i < 8; i++) bindSlider('w' + i, v => (v/100).toFixed(2));
 
-function setMode(m) { /* mode UI removed: always stereo */ }
+function setMode(m) {
+  const el = $('selMode');
+  if (!el) return;
+  const want = m || 'stereo';
+  for (const o of el.options)
+    if (o.value === want) { el.value = want; return; }
+  el.value = 'stereo';
+}
 
 function fillSelect(el, names) {
   const cur = el.selectedIndex;
@@ -414,7 +427,7 @@ function applyState(s) {
 
 function collectConfig() {
   return {
-    mode: 'stereo', // downmix mode UI removed; stereo passthrough always
+    mode: $('selMode') ? $('selMode').value : 'stereo',
     overlay_enabled: $('ovOn').checked,
     classify_enabled: $('clsOn').checked,
     autostart: $('autoOn').checked,

@@ -38,6 +38,11 @@ struct SharedOverlay {
     uint32_t version = 0;
 };
 
+// Live downmix mode for the overlay. Every writer (GUI Apply, tray menu, CLI)
+// updates it, and the overlay reads it once per frame to decide whether the two
+// output channels form a real stereo pair.
+inline std::atomic<int> g_downmixMode{ static_cast<int>(DownmixStereo) };
+
 // Live analysis config (fade time etc.), applied on the capture thread.
 struct SharedAnalysis {
     std::mutex mu;

@@ -9,14 +9,16 @@ float SoftClip(float x) {
 }
 
 void Downmix8To2(const float* in8, float* out2, size_t frames, const DownmixConfig& cfg) {
-    if (cfg.mode == DownmixRightMono) {
+    if (cfg.mode == DownmixRightMono || cfg.mode == DownmixLeftMono) {
         const float* w = cfg.weights;
+        const bool right = (cfg.mode == DownmixRightMono);
         for (size_t f = 0; f < frames; ++f) {
             const float* s = in8 + f * kChannels;
             float sum = w[0] * s[0] + w[1] * s[1] + w[2] * s[2] + w[3] * s[3]
                       + w[4] * s[4] + w[5] * s[5] + w[6] * s[6] + w[7] * s[7];
-            out2[f * 2 + 0] = 0.0f; // user is deaf in the left ear
-            out2[f * 2 + 1] = SoftClip(sum);
+            // Everything into one ear; the other stays silent on purpose.
+            out2[f * 2 + 0] = right ? 0.0f : SoftClip(sum);
+            out2[f * 2 + 1] = right ? SoftClip(sum) : 0.0f;
         }
     } else {
         // ITU-style: center and surrounds at -3 dB into the nearer side, LFE dropped.

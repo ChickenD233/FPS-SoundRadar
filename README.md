@@ -11,7 +11,7 @@ Game-audio direction radar for players who are deaf in one ear. Built for Valora
 FPS-SoundRadar gives you two things:
 
 1. **A visual radar for sound direction.** A click-through overlay points small chevron arrows on an invisible ring toward each live sound source, plus bright bands along the screen edges. Each direction stays independent: front-left plus back-right shows two arrows, never a fake "front center".
-2. **Right-ear mono downmix.** All 8 channels mix into the right ear with adjustable weights. No sound from rear, center, or side channels gets lost.
+2. **Downmix with three output modes.** Stereo keeps the 7.1 spatial image. Right-ear mono and left-ear mono send all 8 channels into one ear with adjustable weights, so no sound from the rear, center, or side channels gets lost. Switch live, no restart.
 
 ### How it works
 
@@ -36,7 +36,11 @@ Game → SoundRadar VAD (virtual 7.1 driver) → loopback capture → SoundRadar
 - Overlay refresh: up to ~120 fps while sound is present, ~4 fps when idle.
 - `SoundRadar.exe --sselftest` runs the detection tests (quiet mix, noise rejection, fade, recovery) without audio devices.
 - Overlay: topmost, fully click-through, never steals focus. CPU under 5% while active, near zero when idle.
-- Downmix modes: right-ear mono (default) and standard stereo.
+- Downmix modes, switchable live from the main window or the tray menu with no restart:
+  - **Stereo (7.1 spatial image)** - the default. Left and right stay separate, so the 7.1 direction image is preserved.
+  - **Right-ear mono** - all eight channels into the right ear, left channel silent.
+  - **Left-ear mono** - all eight channels into the left ear, right channel silent.
+  The two mono modes share the per-channel weight sliders; direction arrows keep working, and pan tracking turns off because the two output channels are no longer a stereo pair.
 - Experimental sound classification: footsteps (100–300 Hz, periodic bursts) and gunshots (broadband transient) get distinct markers.
 - Overlay and classification switches never touch the audio path.
 - Latency target: end-to-end ≤ 30 ms. Measure with `SoundRadar.exe --measure` and `--measure-loopback`. Method: `docs/latency.md`.
@@ -106,7 +110,7 @@ Useful CLI flags: `--list-devices`, `--mode right-mono|stereo`, `--output <name>
 FPS-SoundRadar 提供两个功能：
 
 1. **声音方向可视化**。一个鼠标完全穿透的置顶 Overlay，在隐形圆环上用小箭头实时指向每个声源方向，屏幕四边还有高亮条带。各方向独立显示：前左和后右同时发声就显示两个箭头，绝不合并成虚假的"正前方"。
-2. **右耳单声道下混**。8 个声道按可调权重全部混入右耳。后置、中置、侧置声道的声音一个都不丢。
+2. **三种下混模式**。立体声保留 7.1 空间感；右耳单声道和左耳单声道按可调权重把 8 个声道全部混入一只耳朵，后置、中置、侧置声道的声音一个都不丢。可即时切换，不需要重启。
 
 ### 工作原理
 
@@ -131,7 +135,11 @@ FPS-SoundRadar 提供两个功能：
 - Overlay 刷新率：有声时最高约 120 fps，空闲约 4 fps。
 - `SoundRadar.exe --sselftest` 无需音频设备即可运行检测测试（轻音混音、噪声抑制、渐隐、恢复）。
 - Overlay 置顶、完全点击穿透、不抢焦点。工作时 CPU 低于 5%，空闲接近零。
-- 下混模式：右耳单声道（默认）和标准立体声。
+- 下混模式可在主窗口或托盘菜单里即时切换，不需要重启：
+  - **7.1 立体声（全景声）**：默认。左右耳分开，7.1 空间感保留，方向最准。
+  - **右耳单声道**：8 个声道全部混进右耳，左声道静音。
+  - **左耳单声道**：8 个声道全部混进左耳，右声道静音。
+  两个单声道模式共用逐声道权重滑块；方向箭头照常工作，左右平移跟踪会自动关闭（因为两声道不再是立体声对）。
 - 实验性声音分类：脚步（100–300 Hz 周期性短促爆发）和枪声（宽带高瞬态）有专用标记。
 - 声纹开关和分类开关对音频链路零影响。
 - 延迟目标：端到端 ≤ 30 ms。用 `SoundRadar.exe --measure` 和 `--measure-loopback` 实测。方法见 `docs/latency.md`。

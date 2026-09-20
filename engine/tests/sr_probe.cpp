@@ -10,10 +10,12 @@
 #include "../analysis.h"
 #include "../floatcmp.h"
 #include "../classify.h"
+#include "../downmix.h"
 
 #include <cmath>
 #include <cstdlib>
 #include <cstdio>
+#include <cstring>
 #include <cstring>
 #include <string>
 #include <vector>
@@ -259,6 +261,71 @@ int main(int argc, char** argv) {
               ClassesOf(r.obs) + " lvl " + std::to_string(r.peakLevel) +
                   " gateBlocks " + std::to_string(r.gateBlocks));
         Check(!r.obs.step[5], "quiet ambience did not fire a false arrow", ClassesOf(r.obs));
+    }
+
+    // ------------------------------------------------- 6) downmix mode matrix
+    std::printf("\n== 6. downmix modes (stereo / right-mono / left-mono) ==\n");
+    {
+        const size_t frames = 9600;
+        auto synth = [&](int ch, double freq, double amp, std::vector<float>& in) {
+            in.assign(frames * kCh, 0.0f);
+            for (size_t f = 0; f < frames; ++f) {
+                const double t = static_cast<double>(f) / kFs;
+                in[f * kCh + ch] = static_cast<float>(amp * std::sin(2.0 * M_PI * freq * t));
+            }
+        };
+        auto peaks = [&](const std::vector<float>& out, double& l, double& r) {
+            l = 0;
+            r = 0;
+            for (size_t f = 0; f < frames; ++f) {
+                l = std::max(l, std::fabs(static_cast<double>(out[f * 2])));
+                r = std::max(r, std::fabs(static_cast<double>(out[f * 2 + 1])));
+            }
+        };
+        std::vector<float> in, out(frames * 2);
+        double l = 0, r = 0;
+
+        sr::DownmixConfig sc;
+        synth(0, 500.0, 0.2, in);
+        sr::Downmix8To2(in.data(), out.data(), frames, sc);
+        peaks(out, l, r);
+        Check(l > 0.15 && r < 0.01, "stereo: FL -> left only");
+
+        sr::DownmixConfig rc;
+        rc.mode = sr::DownmixRightMono;
+        synth(4, 500.0, 0.2, in); // BL: far from the front pair
+        sr::Downmix8To2(in.data(), out.data(), frames, rc);
+        peaks(out, l, r);
+        Check(r > 0.1 && l == 0.0, "right-mono: BL -> right, left silent");
+
+        sr::DownmixConfig lc;
+        lc.mode = sr::DownmixLeftMono;
+        sr::Downmix8To2(in.data(), out.data(), frames, lc);
+        peaks(out, l, r);
+        Check(l > 0.1 && r == 0.0, "left-mono: BL -> left, right silent");
+
+        bool allCh = true;
+        for (sr::DownmixMode m : { sr::DownmixRightMono, sr::DownmixLeftMono }) {
+            for (int ch = 0; ch < kCh; ++ch) {
+                sr::DownmixConfig c;
+                c.mode = m;
+                synth(ch, 300.0 + 100.0 * ch, 0.2, in);
+                sr::Downmix8To2(in.data(), out.data(), frames, c);
+                peaks(out, l, r);
+                const double active = (m == sr::DownmixRightMono) ? r : l;
+                const double quiet = (m == sr::DownmixRightMono) ? l : r;
+                if (!(active > 0.1 && quiet == 0.0)) allCh = false;
+            }
+        }
+        Check(allCh, "both mono modes carry all 8 channels to the active ear");
+
+        sr::DownmixMode parsed = sr::DownmixStereo;
+        Check(std::strcmp(sr::DownmixModeName(sr::DownmixLeftMono), "left-mono") == 0 &&
+                  sr::DownmixModeFromName("left-mono", parsed) &&
+                  parsed == sr::DownmixLeftMono &&
+                  !sr::DownmixModeFromName("garbage", parsed) &&
+                  parsed == sr::DownmixLeftMono,
+              "mode names are stable, parse back, and reject unknown names");
     }
 
     std::printf("\n%s (%d failure(s))\n", g_fail == 0 ? "ALL PROBES PASSED" : "PROBES FAILED",

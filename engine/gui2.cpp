@@ -452,7 +452,7 @@ void Gui::PushState() {
     std::snprintf(num, sizeof(num), ",\"selIn\":%d,\"selOut\":%d", selIn, selOut);
     j += num;
     j += ",\"config\":{";
-    j += std::string("\"mode\":\"") + (cfg.downmix.mode == DownmixStereo ? "stereo" : "right-mono") + "\"";
+    j += std::string("\"mode\":\"") + DownmixModeName(cfg.downmix.mode) + "\"";
     addNum("fade_ms", cfg.analysis.fadeMs);
     addNum("radar_radius", cfg.overlay.radius);
     addNum("overlay_low", cfg.overlay.lowThreshold);
@@ -632,6 +632,7 @@ void Gui::OnBridgeMessage(const wchar_t* jsonW) {
             std::lock_guard<std::mutex> lk(g_downmix.mu);
             g_downmix.cfg = cfg.downmix;
         }
+        g_downmixMode.store(static_cast<int>(cfg.downmix.mode));
         {
             std::lock_guard<std::mutex> lk(g_overlay.mu);
             g_overlay.cfg = cfg.overlay;
@@ -673,8 +674,10 @@ void Gui::ApplyFromJson(const std::string& cj, int selIn, int selOut) {
     int sw = GetSystemMetrics(SM_CXSCREEN), sh = GetSystemMetrics(SM_CYSCREEN);
 
     std::string s;
-    if (JStr(cj, "mode", s))
-        cfg.downmix.mode = (s == "stereo") ? DownmixStereo : DownmixRightMono;
+    if (JStr(cj, "mode", s)) {
+        DownmixMode m = cfg.downmix.mode;
+        if (DownmixModeFromName(s.c_str(), m)) cfg.downmix.mode = m;
+    }
     JBool(cj, "overlay_enabled", cfg.overlay.enabled);
     JBool(cj, "classify_enabled", cfg.classifyEnabled);
     double d;
@@ -778,6 +781,9 @@ void Gui::ApplyFromJson(const std::string& cj, int selIn, int selOut) {
         std::lock_guard<std::mutex> lk(g_downmix.mu);
         g_downmix.cfg = cfg.downmix;
     }
+    // A mode change needs no pipeline restart: the render thread copies the mode
+    // per buffer, and the overlay reads the atomic per frame.
+    g_downmixMode.store(static_cast<int>(cfg.downmix.mode));
     {
         std::lock_guard<std::mutex> lk(g_overlay.mu);
         g_overlay.cfg = cfg.overlay;

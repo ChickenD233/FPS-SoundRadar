@@ -648,10 +648,12 @@ void Overlay::ThreadMain(bool visible) {
             std::memcpy(classes, meters_->classes, sizeof(classes));
             srcCh = meters_->srcChannels;
         }
-        // No display gain here. The analyzer already applies the adaptive
-        // detection gain and the sensitivity curve to frame.level. A second
-        // multiply would amplify ambient noise into the display and make the
-        // sensitivity slider act twice.
+        // The overlay applies no display gain: the analyzer already applied the
+        // adaptive detection gain and the sensitivity curve to frame.level. A
+        // second multiply would amplify ambient noise into the display and make
+        // the sensitivity slider act twice.
+        const DownmixMode downmixMode =
+            static_cast<DownmixMode>(g_downmixMode.load());
         float maxLvl = 0.0f;
         for (int c = 0; c < 8; ++c) if (frame.level[c] > maxLvl) maxLvl = frame.level[c];
         bool active = frame.active || maxLvl > 0.02f;
@@ -676,7 +678,12 @@ void Overlay::ThreadMain(bool visible) {
         bool othersQuiet = true;
         for (int c = 2; c < 8; ++c)
             if (frame.level[c] > 0.03f) othersQuiet = false;
-        bool wantStereo = (srcCh == 2) || (frontPair && othersQuiet && !cfg_.frontMerge);
+        // A mono downmix puts everything into one ear, so the two output
+        // channels are identical, not a stereo pair. Pan tracking would report
+        // nonsense (a fixed +-45 deg), so it stays off for the mono modes.
+        const bool panCapable = (downmixMode == DownmixStereo);
+        bool wantStereo = (srcCh == 2 && panCapable) ||
+                          (frontPair && othersQuiet && !cfg_.frontMerge && panCapable);
         if (wantStereo != stereoMode_) {
             // hysteresis: switch only after ~300 ms of consistent evidence
             modeTimer_ += dt;

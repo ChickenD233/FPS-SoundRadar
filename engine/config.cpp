@@ -122,7 +122,8 @@ bool LoadConfig(const std::wstring& path, AppConfig& cfg) {
 
     std::string s;
     if (GetString(json, "mode", s)) {
-        cfg.downmix.mode = (s == "stereo") ? DownmixStereo : DownmixRightMono;
+        DownmixMode m = cfg.downmix.mode;
+        if (DownmixModeFromName(s.c_str(), m)) cfg.downmix.mode = m;
     }
     GetFloatArray(json, "weights", cfg.downmix.weights, kChannels);
 
@@ -204,7 +205,7 @@ bool SaveConfig(const std::wstring& path, const AppConfig& cfg) {
     char num[64];
     f << "{\n";
     f << "  \"config_version\": " << kConfigVersion << ",\n";
-    f << "  \"mode\": \"" << (cfg.downmix.mode == DownmixStereo ? "stereo" : "right-mono") << "\",\n";
+    f << "  \"mode\": \"" << DownmixModeName(cfg.downmix.mode) << "\",\n";
     f << "  \"weights\": [";
     for (int i = 0; i < kChannels; ++i) {
         std::snprintf(num, sizeof(num), "%.3f", cfg.downmix.weights[i]);
