@@ -28,7 +28,12 @@ struct AnalysisConfig {
     // both the gain and a per-channel burst threshold for the classifier.
     bool  detectAdaptive = true;   // false = legacy fixed-threshold behavior
     float detectFloorDb  = -46.0f; // target level for the measured noise floor
-    float detectRangeDb  = 22.0f;  // display headroom kept above the floor
+    float detectRangeDb  = 22.0f;  // detection headroom kept above the floor
+    // Display reference in dBFS. The displayed level reads the stream level
+    // calibrated to this reference: about -41 dBFS is teal, -33 amber, -18 red.
+    // A quiet step in a low-volume mix stays cyan/teal instead of jumping to
+    // red, which is what the fixed scale could not do before the gain change.
+    float displayRefDb   = -18.0f;
     float detectMaxGainDb = 36.0f; // gain cap (63x), avoids amplifying dither
     float detectMinGainDb = -6.0f; // gain floor (0.5x)
     float detectSensitivity = 2.0f; // user "sensitivity" 0.5..4.0, 2.0 = neutral

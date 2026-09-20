@@ -121,13 +121,20 @@ void Analyzer::Process(const float* in8, size_t frames, AnalysisFrame& out) {
     } else {
         gainLin_ = 1.0f;
     }
-    // The sensitivity slider multiplies the gain, but compressed: a slider
-    // change of 4x must not clip the display into a constant red. The result is
-    // normalized so the default sensitivity (2.0) is the neutral 1.0x.
-    const float sens = FCmpLt(cfg_.detectSensitivity, 0.1f) ? 0.1f : cfg_.detectSensitivity;
-    const float sensGain = std::pow(sens / 2.0f, 0.6f);
-    const float sensRef = std::pow(1.0f, 0.6f); // 1.0 at sensitivity 2.0
-    const float dispGain = gainLin_ * (sensGain / sensRef);
+    // Display gain and detection gain are separate on purpose.
+    //   gainLin_ (from the noise floor) feeds classify and the gate, so a quiet
+    //     mix is still detected.
+    //   dispGain normalizes the display against the floor plus the detection
+    //     headroom (detectRangeDb), so an audible-but-quiet step still draws a
+    //     bright arrow, and the color matches the level above the ambience.
+    //   The sensitivity slider is NOT part of either one. Scaling the display
+    //     by it made 4x push every arrow into the red band, which destroyed the
+    //     far/near color grading without improving detection.
+    // Display reference is an absolute dBFS level. The analyzer normalizes the
+    // raw block level against it, so the color scale keeps its meaning at the
+    // reference level and shows a quiet mix brighter. disp_[c] holds raw rms,
+    // so the division is exact.
+    const float dispRefRms = std::pow(10.0f, cfg_.displayRefDb / 20.0f);
 
     const float gateMargin = cfg_.gateMarginDb;
     const float burstMarginLin = std::pow(10.0f, cfg_.burstMarginDb / 20.0f);
@@ -249,7 +256,7 @@ void Analyzer::Process(const float* in8, size_t frames, AnalysisFrame& out) {
             float soft = FCmpGe(env, openAt) ? 1.0f
                                          : (rms - knee) / (openAt - knee + 1e-12f);
             if (FCmpLt(soft, 0.0f)) soft = 0.0f;
-            lvl = disp_[c] * dispGain * soft;
+            lvl = (disp_[c] / dispRefRms) * soft;
             if (FCmpGt(lvl, 1.0f)) lvl = 1.0f;
         }
         out.level[c] = lvl;
@@ -265,7 +272,7 @@ void Analyzer::Process(const float* in8, size_t frames, AnalysisFrame& out) {
     burstRms_ = blockBurstRms;
     for (int c = 0; c < kAnalysisChannels; ++c)
         if (FCmpLe(burstThresholds[c], 0.0f)) burstThresholds[c] = burstRms_;
-    out.detectGain = cfg_.detectAdaptive ? dispGain : 1.0f;
+    out.detectGain = cfg_.detectAdaptive ? gainLin_ : 1.0f;
     out.detectThreshold = burstRms_;
     {
         float maxFloor = kFloorInitDb;

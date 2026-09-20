@@ -28,7 +28,7 @@ Game → SoundRadar VAD (virtual 7.1 driver) → loopback capture → SoundRadar
 
 - Direction arrows on an invisible ring (continuous 360° tracking, one arrow per simultaneous source) and screen-edge bands, color-graded by loudness (green far, yellow mid, red near; thresholds adjustable).
 - Adaptive detection. The engine measures the ambient noise floor per channel over a sliding window and normalizes against it, so a quiet game mix (for example 40% global volume) still trips the arrows. The sensitivity slider feeds that detection gain, not a display-only multiply. Footsteps 15-20 dB above the ambient floor are detected. The old fixed thresholds stopped at -24 dBFS.
-- The sensitivity slider still keeps the color scale readable: it is compressed, so 4x does not turn every arrow red at once.
+- Every adjustable control carries a one-line hint that says which way to drag it and what happens. The sensitivity slider is a brightness control (it does not decide what gets detected; the detection threshold does), and the color scale is calibrated to absolute stream level, so a quiet step in a low-volume mix stays cyan/teal instead of jumping straight to red.
 - Noise gate. Ambient hiss and fan noise produce no arrows and no glow, so a direction indicator always means real sound.
 - Frontal merge. With the merge toggle on, the front-left and front-right pair always draws ONE arrow dead ahead, even when the two channels differ in level.
 - Fast release. Arrows reach zero 300-700 ms after the sound stops, so no mark lingers over an empty scene.
@@ -127,7 +127,7 @@ FPS-SoundRadar 提供两个功能：
 
 - 隐形圆环上的方向箭头（360° 连续跟踪，每个声源一个箭头）+ 屏幕四边条带，按响度分级变色（绿=远、黄=中、红=近，阈值可调）。
 - 自适应检测。引擎逐声道在滑动窗口内测量环境噪声底，并据此归一化阈值。因此游戏全局音量只有 40% 时，轻微脚步依然能触发箭头。灵敏度滑块直接参与检测增益，不再只是显示放大。比环境噪声底高 15–20 dB 的脚步即可检出；旧的固定阈值下限是 -24 dBFS。
-- 灵敏度滑块做了压缩，4x 也不会把所有箭头一次全变红，颜色分级始终可读。
+- 每个可调项下面都有一行小字，写明往哪边拖、会发生什么。灵敏度滑块只管亮度（能否检测到声音由"检测门限"决定）；颜色刻度按绝对电平标定，所以低音量混音里的轻脚步是青色，不会直接跳到红色。
 - 噪声门。环境底噪和风扇声不会画出箭头、也不会发光，所以出现声纹就一定代表真实声音。
 - 正前方融合。开启融合开关后，左前+右前永远只画一个正前方箭头，两声道音量不一致时也一样。
 - 快速消失。声音停止后 300–700 ms 内声纹归零，不会在空场景上残留。

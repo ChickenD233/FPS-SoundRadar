@@ -81,6 +81,11 @@ body {
 .card h3::after { content: ""; flex: 1; height: 1px; background: rgba(255,255,255,.07); }
 .row { display: flex; align-items: center; gap: 8px; margin: 6px 0; }
 .row label { width: 88px; color: var(--dim); flex: none; }
+/* One-line "which way to drag" note under a control. */
+.hint {
+  margin: -2px 0 8px 96px; color: #8a93a6; font-size: 10.5px; line-height: 1.45;
+}
+.hint b { color: var(--accent); font-weight: 600; }
 
 /* value pill */
 .val {
@@ -171,8 +176,15 @@ button.act.danger:hover { background: rgba(224,96,96,.12); box-shadow: 0 0 12px 
 button.act.ghost { border-color: rgba(255,255,255,.15); color: var(--dim); }
 button.act.ghost:hover { color: var(--text); background: rgba(255,255,255,.05); box-shadow: none; }
 
-/* status footer */
+/* action bar and status footer. The window auto-fits the page, but the content
+   is now taller than a small work area, so keep the Apply button and the status
+   line in view instead of letting them scroll out of the window. */
+#actionBar {
+  position: sticky; bottom: 46px; z-index: 5;
+  background: var(--bg); padding: 8px 0 10px; margin-bottom: 0;
+}
 footer {
+  position: sticky; bottom: 0; z-index: 6;
   display: flex; align-items: center; gap: 10px;
   background: var(--card2); border-top: 1px solid rgba(255,255,255,.06);
   margin: 0; padding: 8px 16px;
@@ -214,6 +226,7 @@ footer {
       <option value="right-mono">右耳单声道 Right-Mono</option>
       <option value="left-mono">左耳单声道 Left-Mono</option>
     </select></div>
+  <div class="hint">立体声：左右耳分开。单声道：全部进一只耳朵</div>
   <div class="row"><label></label><button class="act ghost" id="btnSetDefault" style="flex:1">设为默认输出（系统声音走该设备）</button></div>
 </div>
 
@@ -222,7 +235,8 @@ footer {
   <div class="row"><label class="tgl-label">显示声纹</label>
     <label class="tgl"><input type="checkbox" id="ovOn"><span class="tr"></span></label>
   </div>
-  <div class="row"><label>灵敏度 Sens.</label><input type="range" id="sens" min="50" max="400" step="10"><span class="val" id="sensV"></span></div>
+  <div class="row"><label>灵敏度</label><input type="range" id="sens" min="50" max="400" step="10"><span class="val" id="sensV"></span></div>
+  <div class="hint">只管亮度和变红速度，不决定能否检测到声音。要更灵敏请调"检测门限"</div>
 </div>
 
 <div class="card">
@@ -254,28 +268,42 @@ footer {
   <h2>声纹样式 OVERLAY</h2>
   <h3>内圈 · 方向箭头 INNER ARROWS</h3>
   <div class="row"><label>雷达大小</label><input type="range" id="radius" min="60" max="160" step="1"><span class="val" id="radiusV"></span></div>
+  <div class="hint">调<b>高</b>圆环更大、离中心更远；挡视野就调<b>低</b></div>
   <div class="row"><label>位置X</label><input type="range" id="posX" min="-50" max="50" step="1"><span class="val" id="posXV"></span></div>
+  <div class="hint">负 = 左移，正 = 右移</div>
   <div class="row"><label>位置Y</label><input type="range" id="posY" min="0" max="50" step="1"><span class="val" id="posYV"></span></div>
+  <div class="hint">调<b>高</b>圆环下移，准星被挡时用</div>
   <div class="row"><label>渐隐时间</label><input type="range" id="fade" min="300" max="500" step="10"><span class="val" id="fadeV"></span></div>
-  <div class="row"><label>指针淡出</label><input type="range" id="afade" min="150" max="1200" step="50"><span class="val" id="afadeV"></span></div>
+  <div class="hint">声音停止后消失的时间：调<b>低</b>更快，调<b>高</b>更久</div>
+  <div class="row"><label>指针残留</label><input type="range" id="afade" min="150" max="1200" step="50"><span class="val" id="afadeV"></span></div>
+  <div class="hint">追不上快速转身 → 调<b>低</b>；闪烁跳变 → 调<b>高</b></div>
   <h3>外圈 · 边缘条带 EDGE BANDS</h3>
   <div class="row"><label>条带粗细</label><input type="range" id="edgeW" min="50" max="250" step="5"><span class="val" id="edgeWV"></span></div>
+  <div class="hint">四边色带厚度，100% = 默认</div>
   <div class="row"><label>条带长度</label><input type="range" id="edgeL" min="50" max="250" step="5"><span class="val" id="edgeLV"></span></div>
+  <div class="hint">色带沿边缘的长度，100% = 默认</div>
   <div class="row"><label>特效强度</label><input type="range" id="fx" min="0" max="100" step="1"><span class="val" id="fxV"></span></div>
+  <div class="hint">光晕拖尾强度：嫌花就调<b>低</b>，0 = 朴素箭头</div>
   <div class="row"><label>阈值 绿→黄</label><input type="range" id="low" min="5" max="95" step="1"><span class="val" id="lowV"></span></div>
+  <div class="hint">调<b>低</b>：小声音就变黄；调<b>高</b>：只有大声音变黄</div>
   <div class="row"><label>阈值 黄→红</label><input type="range" id="high" min="5" max="95" step="1"><span class="val" id="highV"></span></div>
+  <div class="hint">调<b>低</b>：更多声纹变红；调<b>高</b>：只有很近才变红</div>
 </div>
 
 <div class="card">
   <h2>检测 DETECTION</h2>
   <div class="row"><label>检测门限</label><input type="range" id="dth" min="0" max="10" step="0.5"><span class="val" id="dthV"></span></div>
+  <div class="hint">显示箭头所需音量：调<b>低</b>更灵敏（可能误报）；调<b>高</b>只显示明确声音</div>
   <div class="row"><label>分类能量门限</label><input type="range" id="cburst" min="1" max="15" step="0.5"><span class="val" id="cburstV"></span></div>
+  <div class="hint">脚步/枪声图标所需能量：调<b>低</b>更容易出现；调<b>高</b>只标明确声音</div>
   <div class="row"><label class="tgl-label" style="width:auto">正前方融合</label>
     <label class="tgl"><input type="checkbox" id="fmerge"><span class="tr"></span></label>
   </div>
+  <div class="hint">开：左前+右前只画<b>一个</b>正前方箭头。关：各画一个</div>
   <div class="row"><label class="tgl-label" style="width:auto">隐藏弹着点</label>
     <label class="tgl"><input type="checkbox" id="hideImp"><span class="tr"></span></label>
   </div>
+  <div class="hint">开：弹着点不画箭头。关：弹着点也显示</div>
 </div>
 
 <div class="card">
@@ -284,13 +312,18 @@ footer {
     <label class="tgl"><input type="checkbox" id="duckOn"><span class="tr"></span></label>
   </div>
   <div class="row"><label>开枪削弱</label><input type="range" id="duckFire" min="0" max="100" step="5"><span class="val" id="duckFireV"></span></div>
+  <div class="hint">按左键时正前方箭头淡多少：调<b>高</b>自己的枪声更不挡视线</div>
   <div class="row"><label>走路削弱</label><input type="range" id="duckWalk" min="0" max="100" step="5"><span class="val" id="duckWalkV"></span></div>
-  <div class="row"><label>拖尾</label><input type="range" id="duckRel" min="100" max="600" step="20"><span class="val" id="duckRelV"></span></div>
+  <div class="hint">按 WASD 时正前方箭头淡多少：调<b>高</b>自己的脚步更不挡视线</div>
+  <div class="row"><label>衰减恢复</label><input type="range" id="duckRel" min="100" max="600" step="20"><span class="val" id="duckRelV"></span></div>
+  <div class="hint">松开按键后的恢复时间：调<b>低</b>更快，调<b>高</b>更久</div>
   <div class="row"><label>前锥角</label><input type="range" id="duckCone" min="30" max="70" step="5"><span class="val" id="duckConeV"></span></div>
+  <div class="hint">抑制的正前方张角：调<b>高</b>影响到更偏侧面的箭头</div>
 </div>
 
 <div class="card">
   <h2>8 声道权重 WEIGHTS</h2>
+  <div class="hint" style="margin:0 0 6px">只作用于单声道模式。想某个方向更响就调<b>高</b>那格（100% = 原音量）</div>
   <div class="wgrid" id="wgrid"></div>
   <div class="btns" style="margin-top:6px"><button class="act ghost" id="resetW">重置 Reset</button></div>
 </div>
@@ -300,13 +333,15 @@ footer {
   <div class="row"><label class="tgl-label" style="width:auto">声音分类（实验性）</label>
     <label class="tgl"><input type="checkbox" id="clsOn"><span class="tr"></span></label>
   </div>
+  <div class="hint">在箭头旁标出脚步/枪声图标，只影响显示</div>
   <div class="row"><label class="tgl-label" style="width:auto">开机自启</label>
     <label class="tgl"><input type="checkbox" id="autoOn"><span class="tr"></span></label>
   </div>
+  <div class="hint">开机后自动托盘运行，不弹主窗口</div>
 </div>
 </div>
 
-<div class="btns">
+<div class="btns" id="actionBar">
   <button class="act danger" id="btnExit">退出程序</button>
   <button class="act ghost" id="btnMin">最小化到托盘</button>
   <button class="act primary" id="btnApply">应用 Apply</button>

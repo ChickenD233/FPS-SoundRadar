@@ -835,6 +835,18 @@ void Gui::MeasureAndFit() {
     if (nx < mi.rcWork.left) nx = mi.rcWork.left;
     bool moved = (nx != wr.left || ny != wr.top);
     if (curH == contentH && !moved) return;
+    // The action bar and the status footer are position:sticky, so a height
+    // change also changes scrollHeight. Allow a few adjustments inside one
+    // burst, then stop, so two heights cannot oscillate. A later page change
+    // (tab switch, preset load) arrives after the burst window and re-fits.
+    static ULONGLONG burstStart = 0;
+    static int burstSteps = 0;
+    const ULONGLONG now = GetTickCount64();
+    if (now - burstStart > 300) {
+        burstStart = now;
+        burstSteps = 0;
+    }
+    if (++burstSteps > 3) return;
     SetWindowPos(hwnd_, nullptr, nx, ny, width, contentH,
                  (moved ? 0 : SWP_NOMOVE) | SWP_NOZORDER | SWP_NOACTIVATE);
     RECT after;
