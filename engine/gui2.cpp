@@ -12,8 +12,10 @@
 #include <dwmapi.h>
 #include <shlwapi.h>
 #include <uxtheme.h>
+#include <commdlg.h>
 
 #pragma comment(lib, "dwmapi")
+#pragma comment(lib, "comdlg32")
 
 #include <cstdio>
 #include <cstring>
@@ -462,6 +464,7 @@ void Gui::PushState() {
     addNum("duck_walk", cfg.overlay.duckWalk);
     addNum("duck_release_ms", cfg.overlay.duckReleaseMs);
     addNum("duck_cone_deg", cfg.overlay.duckConeDeg);
+    addNum("arrow_fade_ms", cfg.overlay.arrowFadeMs);
     j += ",\"front_merge\":"; j += cfg.overlay.frontMerge ? "true" : "false";
     j += ",\"duck_enabled\":"; j += cfg.overlay.duckEnabled ? "true" : "false";
     j += ",\"overlay_enabled\":"; j += cfg.overlay.enabled ? "true" : "false";
@@ -564,6 +567,67 @@ void Gui::OnBridgeMessage(const wchar_t* jsonW) {
         PushState();
         return;
     }
+    if (cmd == "exportConfig") {
+        if (!hooks_.cfg) return;
+        wchar_t file[MAX_PATH] = L"SoundRadar-config.json";
+        std::wstring initDir = AppDataDir();
+        OPENFILENAMEW ofn = {};
+        ofn.lStructSize = sizeof(ofn);
+        ofn.hwndOwner = hwnd_;
+        ofn.lpstrFile = file;
+        ofn.nMaxFile = MAX_PATH;
+        ofn.lpstrFilter = L"JSON 文件\0*.json\0";
+        ofn.lpstrInitialDir = initDir.c_str();
+        ofn.lpstrDefExt = L"json";
+        ofn.Flags = OFN_OVERWRITEPROMPT | OFN_NOCHANGEDIR;
+        if (!GetSaveFileNameW(&ofn)) return; // user cancelled
+        SaveConfig(hooks_.configPath, *hooks_.cfg); // flush current state first
+        bool ok = SaveConfig(file, *hooks_.cfg);
+        Log("gui2: export config -> '%s': %s", ToUtf8(file).c_str(), ok ? "ok" : "FAILED");
+        return;
+    }
+    if (cmd == "importConfig") {
+        if (!hooks_.cfg) return;
+        wchar_t file[MAX_PATH] = {};
+        std::wstring initDir = AppDataDir();
+        OPENFILENAMEW ofn = {};
+        ofn.lStructSize = sizeof(ofn);
+        ofn.hwndOwner = hwnd_;
+        ofn.lpstrFile = file;
+        ofn.nMaxFile = MAX_PATH;
+        ofn.lpstrFilter = L"JSON 文件\0*.json\0";
+        ofn.lpstrInitialDir = initDir.c_str();
+        ofn.Flags = OFN_FILEMUSTEXIST | OFN_NOCHANGEDIR;
+        if (!GetOpenFileNameW(&ofn)) return; // user cancelled
+        AppConfig& cfg = *hooks_.cfg;
+        if (!LoadConfig(file, cfg)) {
+            Log("gui2: import config <- '%s': FAILED (unreadable)", ToUtf8(file).c_str());
+            return;
+        }
+        {
+            std::lock_guard<std::mutex> lk(g_downmix.mu);
+            g_downmix.cfg = cfg.downmix;
+        }
+        {
+            std::lock_guard<std::mutex> lk(g_overlay.mu);
+            g_overlay.cfg = cfg.overlay;
+            ++g_overlay.version;
+        }
+        {
+            std::lock_guard<std::mutex> lk(g_analysis.mu);
+            g_analysis.cfg = cfg.analysis;
+            ++g_analysis.version;
+        }
+        g_classifyEnabled.store(cfg.classifyEnabled);
+        lastInput_ = cfg.captureDevice;
+        lastOutput_ = cfg.outputDevice;
+        SaveConfig(hooks_.configPath, cfg);
+        Log("gui2: import config <- '%s': ok", ToUtf8(file).c_str());
+        // devChanged=true: force a pipeline restart so classify tuning applies
+        if (hooks_.onApply) hooks_.onApply(true);
+        PushState();
+        return;
+    }
     if (cmd == "apply") {
         double selIn = 0, selOut = 0;
         JNum(j, "selIn", selIn);
@@ -608,6 +672,24 @@ void Gui::ApplyFromJson(const std::string& cj, int selIn, int selOut) {
         cfg.classify.burstThreshold = static_cast<float>(d);
     if (cfg.classify.burstThreshold < 0.01f) cfg.classify.burstThreshold = 0.01f;
     if (cfg.classify.burstThreshold > 0.15f) cfg.classify.burstThreshold = 0.15f;
+    if (JNum(cj, "classify_low_ratio", d))
+        cfg.classify.lowDominantRatio = static_cast<float>(d);
+    if (cfg.classify.lowDominantRatio < 1.0f) cfg.classify.lowDominantRatio = 1.0f;
+    if (cfg.classify.lowDominantRatio > 5.0f) cfg.classify.lowDominantRatio = 5.0f;
+    if (JNum(cj, "classify_min_crest", d))
+        cfg.classify.minCrest = static_cast<float>(d);
+    if (cfg.classify.minCrest < 1.2f) cfg.classify.minCrest = 1.2f;
+    if (cfg.classify.minCrest > 4.0f) cfg.classify.minCrest = 4.0f;
+    if (JNum(cj, "classify_spacing_min_ms", d))
+        cfg.classify.minSpacingMs = static_cast<float>(d);
+    if (JNum(cj, "classify_spacing_max_ms", d))
+        cfg.classify.maxSpacingMs = static_cast<float>(d);
+    if (cfg.classify.minSpacingMs < 100.f) cfg.classify.minSpacingMs = 100.f;
+    if (cfg.classify.minSpacingMs > 1200.f) cfg.classify.minSpacingMs = 1200.f;
+    if (cfg.classify.maxSpacingMs < 100.f) cfg.classify.maxSpacingMs = 100.f;
+    if (cfg.classify.maxSpacingMs > 1200.f) cfg.classify.maxSpacingMs = 1200.f;
+    if (cfg.classify.minSpacingMs >= cfg.classify.maxSpacingMs)
+        cfg.classify.minSpacingMs = cfg.classify.maxSpacingMs - 50.f;
     JBool(cj, "front_merge", cfg.overlay.frontMerge);
     JBool(cj, "duck_enabled", cfg.overlay.duckEnabled);
     if (JNum(cj, "duck_fire", d)) cfg.overlay.duckFire = static_cast<float>(d);
@@ -624,6 +706,10 @@ void Gui::ApplyFromJson(const std::string& cj, int selIn, int selOut) {
         cfg.overlay.duckConeDeg = static_cast<float>(d);
     if (cfg.overlay.duckConeDeg < 30.0f) cfg.overlay.duckConeDeg = 30.0f;
     if (cfg.overlay.duckConeDeg > 70.0f) cfg.overlay.duckConeDeg = 70.0f;
+    if (JNum(cj, "arrow_fade_ms", d))
+        cfg.overlay.arrowFadeMs = static_cast<int>(d);
+    if (cfg.overlay.arrowFadeMs < 150) cfg.overlay.arrowFadeMs = 150;
+    if (cfg.overlay.arrowFadeMs > 1200) cfg.overlay.arrowFadeMs = 1200;
     JFloatArray(cj, "weights", cfg.downmix.weights, 8);
 
     bool wantAuto = AutostartIsEnabled();

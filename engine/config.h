@@ -29,6 +29,7 @@ struct OverlayConfig {
     float duckWalk = 0.65f;   // attenuation 0-1 while WASD is held
     int duckReleaseMs = 300;  // attenuation tail after key release, ms
     float duckConeDeg = 50.f; // front cone half-angle the attenuation applies to, +-deg
+    int arrowFadeMs = 500;    // arrow fade-out after sound stops, ms
 };
 
 struct AppConfig {

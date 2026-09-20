@@ -75,12 +75,14 @@ public:
         float pulse = 0;    // onset ripple 0..1 (0 = none), ~150 ms
         float age = 0;      // seconds since spawn (scale-in pop)
         float trail0 = 0, trail1 = 0; // recent older angles (comet trail)
+        float missMs = 0;   // ms since last matched (fade hold + decay)
         bool matched = false;
     };
 
     // minLevel: display threshold; dt: seconds since last call.
-    // frontMerge: merge FL+C+FR into a single arrow for dead-ahead sound.
-    void Update(const float levels[8], float minLevel, float dt, bool frontMerge) {
+    // frontMerge: fuse peaks closer than 60 deg into one dead-ahead arrow.
+    // arrowFadeMs: unmatched arrows hold 150 ms, then fade out over ~arrowFadeMs.
+    void Update(const float levels[8], float minLevel, float dt, bool frontMerge, int arrowFadeMs) {
         // 1) candidate peaks: level >= both ring neighbors, above threshold
         bool cand[7];
         for (int i = 0; i < 7; ++i) {
@@ -89,38 +91,14 @@ public:
             float ln = levels[kRingCh[(i + 1) % 7]];
             cand[i] = l > minLevel && l >= lp && l >= ln;
         }
-        // frontal merge: a dead-ahead sound lights FL+C+FR; when C dips below
-        // candidacy FL/FR split into two arrows. Bridge C while it still
-        // carries energy; with an empty C, balanced FL/FR and nothing else on
-        // the ring, force a single 0-deg peak instead of two centroids.
-        bool forceFront = false;
-        float forceEnergy = 0.0f;
-        if (frontMerge && cand[2] && cand[4]) { // ring idx 2/4 = FL/FR
-            float fl = levels[0], fr = levels[1];
-            float lo = fl < fr ? fl : fr, hi = fl > fr ? fl : fr;
-            if (levels[2] >= 0.35f * lo) {
-                cand[3] = true; // C bridges FL-FR into one centroid run
-            } else if (lo >= 0.5f * hi) {
-                bool others = false;
-                for (int i = 0; i < 7; ++i)
-                    if (i != 2 && i != 4 && cand[i]) { others = true; break; }
-                if (!others) { forceFront = true; forceEnergy = hi; }
-            }
-        }
         // 2) maximal circular runs of adjacent candidates -> one peak each,
         //    centroid = energy-weighted circular mean over run +/- 1 neighbor
         struct Peak { float angle, energy; };
         Peak peaks[4];
         int nPeaks = 0;
-        if (forceFront) {
-            peaks[0].angle = 0.0f;
-            peaks[0].energy = forceEnergy;
-            nPeaks = 1;
-        }
         int start = -1;
-        if (!forceFront)
-            for (int i = 0; i < 7; ++i)
-                if (!cand[i] && cand[(i + 1) % 7]) { start = (i + 1) % 7; break; }
+        for (int i = 0; i < 7; ++i)
+            if (!cand[i] && cand[(i + 1) % 7]) { start = (i + 1) % 7; break; }
         if (start >= 0) {
             int i = start;
             do {
@@ -146,6 +124,35 @@ public:
                 }
                 i = (b + 1) % 7;
             } while (i != start && nPeaks < 4);
+        }
+
+        // frontal merge: fuse any two peaks closer than 60 deg into one
+        // energy-weighted circular mean (FL+FR dead-ahead -> a single ~0 deg
+        // arrow); genuinely separate sources sit >= 90 deg apart and survive
+        if (frontMerge) {
+            bool merged = true;
+            while (merged && nPeaks > 1) {
+                merged = false;
+                for (int a = 0; a < nPeaks && !merged; ++a) {
+                    for (int b = a + 1; b < nPeaks; ++b) {
+                        if (std::fabs(AngDist(peaks[a].angle, peaks[b].angle)) >= 60.0f)
+                            continue;
+                        double ra = peaks[a].angle * kPi / 180.0;
+                        double rb = peaks[b].angle * kPi / 180.0;
+                        double sx = peaks[a].energy * std::sin(ra) +
+                                    peaks[b].energy * std::sin(rb);
+                        double sy = peaks[a].energy * std::cos(ra) +
+                                    peaks[b].energy * std::cos(rb);
+                        peaks[a].angle = NormAngle(
+                            static_cast<float>(std::atan2(sx, sy)) * 180.0f / kPi);
+                        if (peaks[b].energy > peaks[a].energy)
+                            peaks[a].energy = peaks[b].energy;
+                        peaks[b] = peaks[--nPeaks];
+                        merged = true;
+                        break;
+                    }
+                }
+            }
         }
 
         // 3) match peaks to existing arrows (< 60 deg), else spawn
@@ -179,37 +186,19 @@ public:
                 arrows_.push_back(ar);
             }
         }
-        // unmatched arrows fade out; all arrows age (scale-in pop)
-        for (size_t k = 0; k < arrows_.size();) {
-            arrows_[k].age += dt;
-            if (!arrows_[k].matched) {
-                arrows_[k].strength *= std::exp(-dt / 0.15f);
-                if (arrows_[k].strength < 0.02f) {
-                    arrows_.erase(arrows_.begin() + k);
-                    continue;
-                }
-            }
-            ++k;
-        }
+        // unmatched arrows hold then fade out; all arrows age (scale-in pop)
+        FadeArrows(dt, arrowFadeMs, true);
     }
 
     const std::vector<Arrow>& Arrows() const { return arrows_; }
 
     // Stereo input (srcChannels == 2): one indicator sweeping the front.
     // pan = (R-L)/(L+R) -> angle = pan * 90 deg, smoothed like the clusters.
-    void UpdateStereo(float lvlL, float lvlR, float dt) {
+    void UpdateStereo(float lvlL, float lvlR, float dt, int arrowFadeMs) {
         float smoothA = 1.0f - std::exp(-dt / 0.08f); // 80 ms glide
         float sum = lvlL + lvlR;
         if (sum < 0.05f) { // fade out
-            for (size_t k = 0; k < arrows_.size();) {
-                arrows_[k].age += dt;
-                arrows_[k].strength *= std::exp(-dt / 0.15f);
-                if (arrows_[k].strength < 0.02f) {
-                    arrows_.erase(arrows_.begin() + k);
-                    continue;
-                }
-                ++k;
-            }
+            FadeArrows(dt, arrowFadeMs, false);
             return;
         }
         float pan = (lvlR - lvlL) / sum; // -1..+1
@@ -227,6 +216,7 @@ public:
         if (arrows_.size() > 1) arrows_.resize(1); // stereo = one indicator
         Arrow& ar = arrows_[0];
         ar.matched = true;
+        ar.missMs = 0.0f;
         ar.trail1 = ar.trail0;
         ar.trail0 = ar.angle;
         ar.age += dt;
@@ -243,6 +233,25 @@ public:
     }
 
 private:
+    // fading arrows hold full strength for 150 ms, then decay exponentially
+    // with tau = arrowFadeMs/3 (gone ~arrowFadeMs after the hold ends)
+    void FadeArrows(float dt, int arrowFadeMs, bool unmatchedOnly) {
+        float tau = (arrowFadeMs > 0 ? arrowFadeMs : 500) / 3000.0f;
+        for (size_t k = 0; k < arrows_.size();) {
+            Arrow& ar = arrows_[k];
+            ar.age += dt;
+            if (unmatchedOnly && ar.matched) { ar.missMs = 0.0f; ++k; continue; }
+            ar.missMs += dt * 1000.0f;
+            if (ar.missMs > 150.0f)
+                ar.strength *= std::exp(-dt / tau);
+            if (ar.strength < 0.02f) {
+                arrows_.erase(arrows_.begin() + k);
+                continue;
+            }
+            ++k;
+        }
+    }
+
     std::vector<Arrow> arrows_;
 };
 
@@ -880,13 +889,13 @@ void Overlay::ThreadMain(bool visible) {
         }
 
         if (stereoMode_) {
-            if (active) tracker.UpdateStereo(frame.level[0], frame.level[1], dt);
-            else tracker.UpdateStereo(0.0f, 0.0f, dt); // fade out
+            if (active) tracker.UpdateStereo(frame.level[0], frame.level[1], dt, cfg_.arrowFadeMs);
+            else tracker.UpdateStereo(0.0f, 0.0f, dt, cfg_.arrowFadeMs); // fade out
         } else if (active) {
-            tracker.Update(frame.level, cfg_.detectThreshold, dt, cfg_.frontMerge);
+            tracker.Update(frame.level, cfg_.detectThreshold, dt, cfg_.frontMerge, cfg_.arrowFadeMs);
         } else {
             float zeros[8] = {};
-            tracker.Update(zeros, cfg_.detectThreshold, dt, cfg_.frontMerge);
+            tracker.Update(zeros, cfg_.detectThreshold, dt, cfg_.frontMerge, cfg_.arrowFadeMs);
         }
         if (active) timeSec_ += dt; // shimmer clock pauses when idle
 
@@ -1017,8 +1026,8 @@ bool RenderSceneToFile(const std::wstring& path, int width, int height,
     if (SUCCEEDED(hr)) {
         // one-shot tracker run (long dt -> snaps to centroids, ripple mid-way)
         ArrowTracker tracker;
-        tracker.Update(levels, cfg.detectThreshold, 0.5f, cfg.frontMerge);
-        tracker.Update(levels, cfg.detectThreshold, 0.1f, cfg.frontMerge);
+        tracker.Update(levels, cfg.detectThreshold, 0.5f, cfg.frontMerge, cfg.arrowFadeMs);
+        tracker.Update(levels, cfg.detectThreshold, 0.1f, cfg.frontMerge, cfg.arrowFadeMs);
         rt->BeginDraw();
         rt->Clear(D2D1::ColorF(0.06f, 0.06f, 0.09f, 1.0f)); // opaque dark backdrop
         DrawScene(rt.Get(), res, cfg, tracker.Arrows(), 0.35f, 0.0f, classes,

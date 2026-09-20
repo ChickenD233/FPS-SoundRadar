@@ -222,12 +222,26 @@ footer {
 
 <div id="pageAdv" hidden>
 <div class="card">
+  <h2>配置 PRESETS</h2>
+  <div class="row"><label>游戏预设</label><select id="preset">
+    <option value="" disabled selected>选择预设…</option>
+    <option value="default">默认</option>
+    <option value="cs2">CS2</option>
+    <option value="valorant">无畏契约</option>
+    <option value="delta">三角洲行动</option>
+  </select><button class="act ghost" id="btnPreset">载入预设</button></div>
+  <div class="row"><label></label><button class="act ghost" id="btnExport" style="flex:1">导出配置</button>
+  <button class="act ghost" id="btnImport" style="flex:1">导入配置</button></div>
+</div>
+
+<div class="card">
   <h2>声纹样式 OVERLAY</h2>
   <h3>内圈 · 方向箭头 INNER ARROWS</h3>
   <div class="row"><label>雷达大小</label><input type="range" id="radius" min="60" max="160" step="1"><span class="val" id="radiusV"></span></div>
   <div class="row"><label>位置X</label><input type="range" id="posX" min="-50" max="50" step="1"><span class="val" id="posXV"></span></div>
   <div class="row"><label>位置Y</label><input type="range" id="posY" min="0" max="50" step="1"><span class="val" id="posYV"></span></div>
   <div class="row"><label>渐隐时间</label><input type="range" id="fade" min="300" max="500" step="10"><span class="val" id="fadeV"></span></div>
+  <div class="row"><label>指针淡出</label><input type="range" id="afade" min="150" max="1200" step="50"><span class="val" id="afadeV"></span></div>
   <h3>外圈 · 边缘条带 EDGE BANDS</h3>
   <div class="row"><label>条带粗细</label><input type="range" id="edgeW" min="50" max="250" step="5"><span class="val" id="edgeWV"></span></div>
   <div class="row"><label>条带长度</label><input type="range" id="edgeL" min="50" max="250" step="5"><span class="val" id="edgeLV"></span></div>
@@ -238,8 +252,8 @@ footer {
 
 <div class="card">
   <h2>检测 DETECTION</h2>
-  <div class="row"><label>检测门限</label><input type="range" id="dth" min="1" max="10" step="1"><span class="val" id="dthV"></span></div>
-  <div class="row"><label>分类能量门限</label><input type="range" id="cburst" min="1" max="15" step="1"><span class="val" id="cburstV"></span></div>
+  <div class="row"><label>检测门限</label><input type="range" id="dth" min="1" max="10" step="0.5"><span class="val" id="dthV"></span></div>
+  <div class="row"><label>分类能量门限</label><input type="range" id="cburst" min="1" max="15" step="0.5"><span class="val" id="cburstV"></span></div>
   <div class="row"><label class="tgl-label" style="width:auto">正前方融合</label>
     <label class="tgl"><input type="checkbox" id="fmerge"><span class="tr"></span></label>
   </div>
@@ -317,6 +331,7 @@ function bindSlider(id, fmt) {
   el._show = show;
 }
 bindSlider('fade', v => v + ' ms');
+bindSlider('afade', v => v + ' ms');
 bindSlider('radius', v => v + ' px');
 bindSlider('low', v => (v/100).toFixed(2));
 bindSlider('high', v => (v/100).toFixed(2));
@@ -356,13 +371,14 @@ function applyState(s) {
   $('autoOn').checked = !!c.autostart;
   const set = (id, v) => { if (document.activeElement !== $(id)) { $(id).value = v; } $(id)._show(); };
   set('fade', c.fade_ms); set('radius', c.radar_radius);
+  set('afade', c.arrow_fade_ms !== undefined ? c.arrow_fade_ms : 500);
   set('low', Math.round(c.overlay_low*100)); set('high', Math.round(c.overlay_high*100));
   set('posX', c.pos_x_pct); set('posY', c.pos_y_pct); set('fx', c.overlay_fx);
   if (c.sensitivity !== undefined) set('sens', Math.round(c.sensitivity*100));
   if (c.edge_width !== undefined) set('edgeW', c.edge_width);
   if (c.edge_len !== undefined) set('edgeL', c.edge_len);
-  set('dth', Math.round((c.detect_threshold !== undefined ? c.detect_threshold : 0.03)*100));
-  set('cburst', Math.round((c.classify_burst !== undefined ? c.classify_burst : 0.04)*100));
+  set('dth', Math.round((c.detect_threshold !== undefined ? c.detect_threshold : 0.03)*200)/2);
+  set('cburst', Math.round((c.classify_burst !== undefined ? c.classify_burst : 0.04)*200)/2);
   $('fmerge').checked = c.front_merge !== undefined ? !!c.front_merge : true;
   $('duckOn').checked = c.duck_enabled !== undefined ? !!c.duck_enabled : true;
   set('duckFire', Math.round((c.duck_fire !== undefined ? c.duck_fire : 0.85)*100));
@@ -389,6 +405,7 @@ function collectConfig() {
     classify_enabled: $('clsOn').checked,
     autostart: $('autoOn').checked,
     fade_ms: +$('fade').value,
+    arrow_fade_ms: +$('afade').value,
     radar_radius: +$('radius').value,
     overlay_low: (+$('low').value)/100,
     overlay_high: (+$('high').value)/100,
@@ -421,7 +438,7 @@ function autoApply() {
 $('content').addEventListener('input', e => {
   if (e.target.type === 'range' || e.target.type === 'checkbox') autoApply();
 });
-$('content').addEventListener('change', e => { if (e.target.tagName === 'SELECT') autoApply(); });
+$('content').addEventListener('change', e => { if (e.target.tagName === 'SELECT' && e.target.id !== 'preset') autoApply(); });
 $('btnApply').onclick = () => post({cmd:'apply', selIn: $('selIn').selectedIndex,
                                     selOut: $('selOut').selectedIndex, config: collectConfig()});
 $('btnMin').onclick = () => post({cmd:'minimize'});
@@ -430,6 +447,41 @@ $('resetW').onclick = () => post({cmd:'resetWeights'});
 $('btnTitleMin').onclick = () => post({cmd:'minimize'});
 $('btnTitleClose').onclick = () => post({cmd:'minimize'});
 $('btnSetDefault').onclick = () => post({cmd:'setDefault', selIn: $('selIn').selectedIndex});
+$('btnExport').onclick = () => post({cmd:'exportConfig'});
+$('btnImport').onclick = () => post({cmd:'importConfig'});
+
+const PRESETS = {
+  default: { name:'默认', sensitivity:2.0, detect_threshold:0.03, classify_burst:0.04, classify_low_ratio:2.5, classify_min_crest:2.0, classify_spacing_min_ms:250, classify_spacing_max_ms:700, arrow_fade_ms:500, duck_enabled:true, duck_fire:0.85, duck_walk:0.65, duck_release_ms:300, duck_cone_deg:50, front_merge:true },
+  cs2:     { name:'CS2', sensitivity:2.2, detect_threshold:0.025, classify_burst:0.045, classify_low_ratio:1.5, classify_min_crest:2.0, classify_spacing_min_ms:250, classify_spacing_max_ms:700, arrow_fade_ms:500, duck_enabled:true, duck_fire:0.85, duck_walk:0.65, duck_release_ms:300, duck_cone_deg:50, front_merge:true },
+  valorant:{ name:'无畏契约', sensitivity:2.0, detect_threshold:0.03, classify_burst:0.04, classify_low_ratio:2.5, classify_min_crest:2.0, classify_spacing_min_ms:250, classify_spacing_max_ms:700, arrow_fade_ms:500, duck_enabled:true, duck_fire:0.85, duck_walk:0.65, duck_release_ms:300, duck_cone_deg:50, front_merge:true },
+  delta:   { name:'三角洲行动', sensitivity:3.0, detect_threshold:0.02, classify_burst:0.025, classify_low_ratio:2.0, classify_min_crest:1.8, classify_spacing_min_ms:220, classify_spacing_max_ms:750, arrow_fade_ms:600, duck_enabled:true, duck_fire:0.85, duck_walk:0.70, duck_release_ms:350, duck_cone_deg:50, front_merge:true }
+};
+// load: set the controls that exist, then post apply with the control-less
+// classify_* keys merged in (collectConfig alone would drop them)
+function loadPreset(key) {
+  const p = PRESETS[key];
+  if (!p) return;
+  const set = (id, v) => { $(id).value = v; $(id)._show(); };
+  set('sens', Math.round(p.sensitivity*100));
+  set('dth', Math.round(p.detect_threshold*200)/2);
+  set('cburst', Math.round(p.classify_burst*200)/2);
+  set('afade', p.arrow_fade_ms);
+  set('duckFire', Math.round(p.duck_fire*100));
+  set('duckWalk', Math.round(p.duck_walk*100));
+  set('duckRel', p.duck_release_ms);
+  set('duckCone', p.duck_cone_deg);
+  $('fmerge').checked = !!p.front_merge;
+  $('duckOn').checked = !!p.duck_enabled;
+  const cfg = Object.assign(collectConfig(), {
+    classify_low_ratio: p.classify_low_ratio,
+    classify_min_crest: p.classify_min_crest,
+    classify_spacing_min_ms: p.classify_spacing_min_ms,
+    classify_spacing_max_ms: p.classify_spacing_max_ms
+  });
+  post({cmd:'apply', selIn: $('selIn').selectedIndex,
+        selOut: $('selOut').selectedIndex, config: cfg});
+}
+$('btnPreset').onclick = () => loadPreset($('preset').value);
 
 // instant-apply: toggles and device selects take effect without the Apply button
 function instantApply() {

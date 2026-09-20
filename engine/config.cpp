@@ -152,6 +152,7 @@ bool LoadConfig(const std::wstring& path, AppConfig& cfg) {
     if (GetNumber(json, "duck_walk", d)) cfg.overlay.duckWalk = static_cast<float>(d);
     if (GetNumber(json, "duck_release_ms", d)) cfg.overlay.duckReleaseMs = static_cast<int>(d);
     if (GetNumber(json, "duck_cone_deg", d)) cfg.overlay.duckConeDeg = static_cast<float>(d);
+    if (GetNumber(json, "arrow_fade_ms", d)) cfg.overlay.arrowFadeMs = static_cast<int>(d);
     GetBool(json, "classify_enabled", cfg.classifyEnabled);
     if (GetNumber(json, "classify_burst", d)) cfg.classify.burstThreshold = static_cast<float>(d);
     if (GetNumber(json, "classify_low_ratio", d)) cfg.classify.lowDominantRatio = static_cast<float>(d);
@@ -204,6 +205,7 @@ bool SaveConfig(const std::wstring& path, const AppConfig& cfg) {
     f << "  \"duck_walk\": " << cfg.overlay.duckWalk << ",\n";
     f << "  \"duck_release_ms\": " << cfg.overlay.duckReleaseMs << ",\n";
     f << "  \"duck_cone_deg\": " << cfg.overlay.duckConeDeg << ",\n";
+    f << "  \"arrow_fade_ms\": " << cfg.overlay.arrowFadeMs << ",\n";
     f << "  \"classify_enabled\": " << (cfg.classifyEnabled ? "true" : "false") << ",\n";
     f << "  \"classify_burst\": " << cfg.classify.burstThreshold << ",\n";
     f << "  \"classify_low_ratio\": " << cfg.classify.lowDominantRatio << ",\n";
