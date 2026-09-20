@@ -19,7 +19,7 @@ jobs:
       # The script below fetches the SDK and pins its version.
       - name: Fetch WebView2 SDK build/native
         shell: pwsh
-        run: .\scripts\fetch-webview2.ps1
+        run: powershell -ExecutionPolicy Bypass -File scripts\fetch-webview2.ps1
 
       - name: Configure
         run: cmake -S . -B build -G "Visual Studio 17 2022" -A x64
