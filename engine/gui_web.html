@@ -57,7 +57,10 @@ body {
 .tbtn:hover { background: rgba(255,255,255,.08); color: var(--text); }
 .tbtn.close:hover { background: rgba(224,96,96,.18); color: var(--danger); }
 
-#content { padding: 0 16px; }
+/* The page scrolls inside the window, and two bars stay pinned at its bottom.
+   Content must be able to scroll clear of them, or a control at the end of the
+   page can never be reached: the pointer hits the bar instead of the control. */
+#content { padding: 0 16px calc(46px + 58px + 16px); }
 
 .card {
   background: var(--card);
@@ -212,11 +215,12 @@ button.act.ghost:hover { color: var(--text); background: rgba(255,255,255,.05); 
    is now taller than a small work area, so keep the Apply button and the status
    line in view instead of letting them scroll out of the window. */
 #actionBar {
-  position: sticky; bottom: 46px; z-index: 5;
-  background: var(--bg); padding: 8px 0 10px; margin-bottom: 0;
+  position: sticky; bottom: 46px; z-index: 20;
+  background: var(--bg); padding: 10px 0 6px; margin-bottom: 0;
+  box-shadow: 0 -6px 12px rgba(15, 17, 23, .95);
 }
 footer {
-  position: sticky; bottom: 0; z-index: 6;
+  position: sticky; bottom: 0; z-index: 21;
   display: flex; align-items: center; gap: 10px;
   background: var(--card2); border-top: 1px solid rgba(255,255,255,.06);
   margin: 0; padding: 8px 16px;
