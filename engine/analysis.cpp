@@ -130,11 +130,12 @@ void Analyzer::Process(const float* in8, size_t frames, AnalysisFrame& out) {
     //   The sensitivity slider is NOT part of either one. Scaling the display
     //     by it made 4x push every arrow into the red band, which destroyed the
     //     far/near color grading without improving detection.
-    // Display reference is an absolute dBFS level. The analyzer normalizes the
-    // raw block level against it, so the color scale keeps its meaning at the
-    // reference level and shows a quiet mix brighter. disp_[c] holds raw rms,
-    // so the division is exact.
-    const float dispRefRms = std::pow(10.0f, cfg_.displayRefDb / 20.0f);
+    // The display reads "how far above the ambience", so a quiet mix stays
+    // visible. The sensitivity slider then scales that display, compressed so
+    // 4x does not push every arrow into the red band.
+    const float dispRefRms = std::pow(10.0f, (priorFloor + cfg_.displaySpanDb) / 20.0f);
+    const float sens = FCmpLt(cfg_.detectSensitivity, 0.1f) ? 0.1f : cfg_.detectSensitivity;
+    const float dispSens = std::pow(sens / 2.0f, cfg_.displaySensExp);
 
     const float gateMargin = cfg_.gateMarginDb;
     const float burstMarginLin = std::pow(10.0f, cfg_.burstMarginDb / 20.0f);
@@ -256,7 +257,7 @@ void Analyzer::Process(const float* in8, size_t frames, AnalysisFrame& out) {
             float soft = FCmpGe(env, openAt) ? 1.0f
                                          : (rms - knee) / (openAt - knee + 1e-12f);
             if (FCmpLt(soft, 0.0f)) soft = 0.0f;
-            lvl = (disp_[c] / dispRefRms) * soft;
+            lvl = (disp_[c] / dispRefRms) * dispSens * soft;
             if (FCmpGt(lvl, 1.0f)) lvl = 1.0f;
         }
         out.level[c] = lvl;

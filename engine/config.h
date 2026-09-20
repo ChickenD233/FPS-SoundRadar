@@ -19,7 +19,7 @@ struct OverlayConfig {
     int offsetY = 0;          // radar center offset from screen center, px (down positive)
     int radius = 90;          // radar ring radius, px
     int fxPct = 85;           // effects intensity 0-100 (glow/pulse; 0 = flat minimal)
-    float sensitivity = 2.0f; // display gain 0.5-4.0, applied after sqrt mapping
+    float sensitivity = 2.5f; // display gain 0.5-4.0; scales arrow brightness
     int edgeWidthPct = 100;   // edge-band thickness multiplier, percent (50-250)
     int edgeLenPct = 100;     // edge-band length multiplier, percent (50-250)
     float detectThreshold = 0.01f;  // class-arrow detection threshold (display units)

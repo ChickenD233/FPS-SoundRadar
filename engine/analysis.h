@@ -29,11 +29,16 @@ struct AnalysisConfig {
     bool  detectAdaptive = true;   // false = legacy fixed-threshold behavior
     float detectFloorDb  = -46.0f; // target level for the measured noise floor
     float detectRangeDb  = 22.0f;  // detection headroom kept above the floor
-    // Display reference in dBFS. The displayed level reads the stream level
-    // calibrated to this reference: about -41 dBFS is teal, -33 amber, -18 red.
-    // A quiet step in a low-volume mix stays cyan/teal instead of jumping to
-    // red, which is what the fixed scale could not do before the gain change.
-    float displayRefDb   = -18.0f;
+    // Display span, in dB above the measured ambient level. The displayed level
+    // reaches 1.0 at floor + displaySpanDb, which maps the color thresholds
+    // (overlay_low/high, default 0.08 / 0.30) to 2.4 dB / 9 dB above the
+    // ambience. The span follows the measured floor, so a quiet mix stays as
+    // visible as a loud one. An absolute dBFS reference was tried and reverted:
+    // at 40% game volume the arrows read almost black.
+    float displaySpanDb  = 30.0f;
+    // Display gain from the sensitivity slider, compressed so the color scale
+    // survives a 4x setting: sensGain = (sensitivity / 2)^displaySensExp.
+    float displaySensExp = 0.6f;
     float detectMaxGainDb = 36.0f; // gain cap (63x), avoids amplifying dither
     float detectMinGainDb = -6.0f; // gain floor (0.5x)
     float detectSensitivity = 2.0f; // user "sensitivity" 0.5..4.0, 2.0 = neutral

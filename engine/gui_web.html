@@ -236,7 +236,7 @@ footer {
     <label class="tgl"><input type="checkbox" id="ovOn"><span class="tr"></span></label>
   </div>
   <div class="row"><label>灵敏度</label><input type="range" id="sens" min="50" max="400" step="10"><span class="val" id="sensV"></span></div>
-  <div class="hint">只管亮度和变红速度，不决定能否检测到声音。要更灵敏请调"检测门限"</div>
+  <div class="hint">声纹太暗/太小 → 调<b>高</b>；太亮刺眼 → 调<b>低</b>（默认 2.00x）</div>
 </div>
 
 <div class="card">
@@ -531,10 +531,10 @@ function onUpdate(u) {
 }
 
 const PRESETS = {
-  default: { name:'默认', sensitivity:2.0, overlay_low:0.08, overlay_high:0.30, detect_threshold:0.01, classify_burst:0.005, classify_low_ratio:2.5, classify_min_crest:2.0, classify_spacing_min_ms:250, classify_spacing_max_ms:700, classify_impact_ms:60, classify_impact_ratio:2.0, classify_impact_crest:1.8, arrow_fade_ms:500, duck_enabled:true, duck_fire:0.85, duck_walk:0.65, duck_release_ms:300, duck_cone_deg:50, front_merge:true, hide_impact:false },
-  cs2:     { name:'CS2', sensitivity:2.2, overlay_low:0.08, overlay_high:0.30, detect_threshold:0.01, classify_burst:0.005, classify_low_ratio:1.5, classify_min_crest:2.0, classify_spacing_min_ms:250, classify_spacing_max_ms:700, classify_impact_ms:60, classify_impact_ratio:2.0, classify_impact_crest:1.8, arrow_fade_ms:500, duck_enabled:true, duck_fire:0.85, duck_walk:0.65, duck_release_ms:300, duck_cone_deg:50, front_merge:true, hide_impact:false },
-  valorant:{ name:'无畏契约', sensitivity:3.0, overlay_low:0.08, overlay_high:0.30, detect_threshold:0.01, classify_burst:0.005, classify_low_ratio:2.0, classify_min_crest:1.8, classify_spacing_min_ms:250, classify_spacing_max_ms:700, classify_impact_ms:60, classify_impact_ratio:2.2, classify_impact_crest:1.8, arrow_fade_ms:500, duck_enabled:true, duck_fire:0.85, duck_walk:0.65, duck_release_ms:300, duck_cone_deg:50, front_merge:true, hide_impact:true },
-  delta:   { name:'三角洲行动', sensitivity:3.0, overlay_low:0.08, overlay_high:0.30, detect_threshold:0.01, classify_burst:0.005, classify_low_ratio:2.0, classify_min_crest:1.8, classify_spacing_min_ms:220, classify_spacing_max_ms:750, classify_impact_ms:60, classify_impact_ratio:2.0, classify_impact_crest:1.8, arrow_fade_ms:600, duck_enabled:true, duck_fire:0.85, duck_walk:0.70, duck_release_ms:350, duck_cone_deg:50, front_merge:true, hide_impact:false }
+  default: { name:'默认', sensitivity:2.5, overlay_low:0.08, overlay_high:0.30, detect_threshold:0.01, classify_burst:0.005, classify_low_ratio:2.5, classify_min_crest:2.0, classify_spacing_min_ms:250, classify_spacing_max_ms:700, classify_impact_ms:35, classify_impact_ratio:2.0, classify_impact_crest:1.8, arrow_fade_ms:500, duck_enabled:true, duck_fire:0.85, duck_walk:0.65, duck_release_ms:300, duck_cone_deg:50, front_merge:true, hide_impact:false },
+  cs2:     { name:'CS2', sensitivity:2.5, overlay_low:0.08, overlay_high:0.30, detect_threshold:0.01, classify_burst:0.005, classify_low_ratio:1.5, classify_min_crest:2.0, classify_spacing_min_ms:250, classify_spacing_max_ms:700, classify_impact_ms:35, classify_impact_ratio:2.0, classify_impact_crest:1.8, arrow_fade_ms:500, duck_enabled:true, duck_fire:0.85, duck_walk:0.65, duck_release_ms:300, duck_cone_deg:50, front_merge:true, hide_impact:false },
+  valorant:{ name:'无畏契约', sensitivity:3.0, overlay_low:0.08, overlay_high:0.30, detect_threshold:0.01, classify_burst:0.005, classify_low_ratio:2.0, classify_min_crest:1.8, classify_spacing_min_ms:250, classify_spacing_max_ms:700, classify_impact_ms:35, classify_impact_ratio:2.2, classify_impact_crest:1.8, arrow_fade_ms:500, duck_enabled:true, duck_fire:0.85, duck_walk:0.65, duck_release_ms:300, duck_cone_deg:50, front_merge:true, hide_impact:true },
+  delta:   { name:'三角洲行动', sensitivity:3.0, overlay_low:0.08, overlay_high:0.30, detect_threshold:0.01, classify_burst:0.005, classify_low_ratio:2.0, classify_min_crest:1.8, classify_spacing_min_ms:220, classify_spacing_max_ms:750, classify_impact_ms:35, classify_impact_ratio:2.0, classify_impact_crest:1.8, arrow_fade_ms:600, duck_enabled:true, duck_fire:0.85, duck_walk:0.70, duck_release_ms:350, duck_cone_deg:50, front_merge:true, hide_impact:false }
 };
 // load: set the controls that exist, then post apply with the control-less
 // classify_* keys merged in (collectConfig alone would drop them)

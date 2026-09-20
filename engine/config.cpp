@@ -13,7 +13,7 @@ namespace sr {
 
 // config file schema version; bump when retuned defaults must overwrite the
 // values old builds persisted (see the migration at the end of LoadConfig).
-constexpr int kConfigVersion = 3;
+constexpr int kConfigVersion = 4;
 
 std::wstring DefaultConfigPath() {
     wchar_t buf[MAX_PATH] = {};
@@ -190,6 +190,9 @@ bool LoadConfig(const std::wstring& path, AppConfig& cfg) {
         cfg.overlay.detectThreshold = 0.01f;
         cfg.classify.burstThreshold = 0.005f;
     }
+    // migration v4: the default display brightness moved to 2.5, because 2.0
+    // read too dark on a low game volume. Do not raise a deliberate low value.
+    if (ver < 4 && cfg.overlay.sensitivity < 2.0f) cfg.overlay.sensitivity = 2.5f;
     return true;
 }
 
