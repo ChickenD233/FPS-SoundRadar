@@ -28,6 +28,7 @@ Game → SoundRadar VAD (virtual 7.1 driver) → loopback capture → SoundRadar
 
 - Direction arrows on an invisible ring (continuous 360° tracking, one arrow per simultaneous source) and screen-edge bands, color-graded by loudness (green far, yellow mid, red near; thresholds adjustable).
 - Adaptive detection. The engine measures the ambient noise floor per channel over a sliding window and normalizes against it, so a quiet game mix (for example 40% global volume) still trips the arrows. The sensitivity slider feeds that detection gain, not a display-only multiply. Footsteps 15-20 dB above the ambient floor are detected. The old fixed thresholds stopped at -24 dBFS.
+- A control the user touched keeps the user's value. The app pushes its stored state to the window twice a second; before this, that packet overwrote anything not yet applied, so a switch flipped back and a number field reverted while the user was still editing it.
 - Every slider reads low to high from left to right. The two ends carry the words 低 and 高 in fluorescent blue and amber, the track shows the same ramp, and the hint under the slider uses those colors on the same words. The readable cue and the text cue cannot disagree. The sensitivity slider sets arrow brightness and how soon the color turns red. The detection threshold decides what gets detected. The color scale is relative to the measured ambient level, so a quiet mix stays visible instead of reading black.
 - Noise gate. Ambient hiss and fan noise produce no arrows and no glow, so a direction indicator always means real sound.
 - Frontal merge. With the merge toggle on, the front-left and front-right pair always draws ONE arrow dead ahead, even when the two channels differ in level.
@@ -126,6 +127,7 @@ FPS-SoundRadar 提供两个功能：
 
 - 隐形圆环上的方向箭头（360° 连续跟踪，每个声源一个箭头）+ 屏幕四边条带，按响度分级变色（绿=远、黄=中、红=近，阈值可调）。
 - 自适应检测。引擎逐声道在滑动窗口内测量环境噪声底，并据此归一化阈值。因此游戏全局音量只有 40% 时，轻微脚步依然能触发箭头。灵敏度滑块直接参与检测增益，不再只是显示放大。比环境噪声底高 15–20 dB 的脚步即可检出；旧的固定阈值下限是 -24 dBFS。
+- 用户刚改过的控件以用户的值为准。程序每秒两次把已保存的状态推给界面；在此之前这个状态包会覆盖尚未应用的内容，导致开关自己弹回、数字字段在编辑时被改回。
 - 每个滑块都是左低右高：两端标注"低"和"高"，分别是荧光蓝和橙色；轨道是同一条渐变色，滑块下面的提示里同名文字用同一颜色，颜色和文字不会互相矛盾。灵敏度滑块决定箭头亮度和多久变红；能否检测到声音由"检测门限"决定。颜色刻度相对实测环境噪声底，所以低音量混音也能看清，不会一片漆黑。
 - 噪声门。环境底噪和风扇声不会画出箭头、也不会发光，所以出现声纹就一定代表真实声音。
 - 正前方融合。开启融合开关后，左前+右前永远只画一个正前方箭头，两声道音量不一致时也一样。

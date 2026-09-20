@@ -568,6 +568,11 @@ function bindSlider(id, fmt) {
   show();
 }
 paintHint(document);
+wireTouch(["fade", "afade", "radius", "posX", "posY", "fx", "low", "high", "sens",
+           "edgeW", "edgeL", "dth", "cburst", "duckFire", "duckWalk", "duckRel", "duckCone",
+           "w0", "w1", "w2", "w3", "w4", "w5", "w6", "w7",
+           "mtDpi", "mtSens", "mtCmn", "mtGame", "mtCal",
+           "ovOn", "clsOn", "autoOn", "fmerge", "hideImp", "duckOn", "mtOn", "mtInv"]);
 // Switches apply at once, the same as a slider change. A toggle that needed a
 // separate Apply click is easy to read as "the switch does nothing".
 for (const id of ["mtOn", "mtInv", "ovOn", "clsOn", "autoOn", "fmerge", "hideImp", "duckOn"]) {
@@ -598,6 +603,41 @@ bindSlider('duckRel', v => v + ' ms');
 bindSlider('duckCone', v => v + '°');
 for (let i = 0; i < 8; i++) bindSlider('w' + i, v => (v/100).toFixed(2));
 
+// The host pushes the full state every 500 ms. Those packets carry the values
+// the host already stored, so writing them straight into the controls wiped
+// whatever the user had just clicked or typed: the switch flipped back, a
+// number field reverted, a slider snapped home. Track the controls the user
+// touched and let them win until Apply (or until focus and the pointer leave).
+const touched = new Set();
+function isTouched(id) { return touched.has(id); }
+function markTouched(id) { touched.add(id); }
+function clearTouch(id) { touched.delete(id); }
+function guardSet(id, apply) {
+  const el = document.getElementById(id);
+  if (el && (document.activeElement === el || isTouched(id))) return;
+  apply();
+}
+function wireTouch(ids) {
+  for (const id of ids) {
+    const el = document.getElementById(id);
+    if (!el) continue;
+    el.addEventListener("input", () => markTouched(id));
+    el.addEventListener("change", () => markTouched(id));
+    // drop the mark once the user is done with the control
+    el.addEventListener("blur", () => clearTouch(id));
+    el.addEventListener("mouseleave", () => { if (document.activeElement !== el) clearTouch(id); });
+  }
+}
+function clearTouches() {
+  // Keep the mark for a control the user is still holding, so a state packet
+  // that arrives mid-interaction cannot move it.
+  for (const id of [...touched]) {
+    const el = document.getElementById(id);
+    if (el && document.activeElement === el) continue;
+    touched.delete(id);
+  }
+}
+
 function setMode(m) {
   const el = $('selMode');
   if (!el) return;
@@ -622,33 +662,37 @@ function applyState(s) {
   if (s.selOut !== undefined && document.activeElement !== $('selOut')) $('selOut').selectedIndex = s.selOut;
   const c = s.config;
   setMode(c.mode);
-  $('ovOn').checked = !!c.overlay_enabled;
-  $('clsOn').checked = !!c.classify_enabled;
-  $('autoOn').checked = !!c.autostart;
-  const set = (id, v) => { if (document.activeElement !== $(id)) { $(id).value = v; } $(id)._show(); };
+  guardSet('ovOn', () => { $('ovOn').checked = !!c.overlay_enabled; });
+  guardSet('clsOn', () => { $('clsOn').checked = !!c.classify_enabled; });
+  guardSet('autoOn', () => { $('autoOn').checked = !!c.autostart; });
+  const set = (id, v) => guardSet(id, () => { $(id).value = v; $(id)._show(); });
   set('fade', c.fade_ms); set('radius', c.radar_radius);
   set('afade', c.arrow_fade_ms !== undefined ? c.arrow_fade_ms : 500);
   set('low', Math.round(c.overlay_low*100)); set('high', Math.round(c.overlay_high*100));
   set('posX', c.pos_x_pct); set('posY', c.pos_y_pct); set('fx', c.overlay_fx);
   if (c.sensitivity !== undefined) set('sens', Math.round(c.sensitivity*100));
-  if (c.mouse_turn !== undefined && $('mtOn')) $('mtOn').checked = !!c.mouse_turn;
-  if (c.mouse_dpi !== undefined && $('mtDpi')) $('mtDpi').value = Math.round(c.mouse_dpi);
-  if (c.mouse_cm360 !== undefined && $('mtCmn') && document.activeElement !== $('mtCmn'))
-    $('mtCmn').value = (+c.mouse_cm360).toFixed(2);
+  if (c.mouse_turn !== undefined && $('mtOn'))
+    guardSet('mtOn', () => { $('mtOn').checked = !!c.mouse_turn; });
+  if (c.mouse_dpi !== undefined && $('mtDpi'))
+    guardSet('mtDpi', () => { $('mtDpi').value = Math.round(c.mouse_dpi); });
+  if (c.mouse_cm360 !== undefined && $('mtCmn'))
+    guardSet('mtCmn', () => { $('mtCmn').value = (+c.mouse_cm360).toFixed(2); });
   if (c.mouse_cal_pct !== undefined && $('mtCal')) set('mtCal', c.mouse_cal_pct);
   if (c.mouse_deg_per_count > 0) set('mtCal', c.mouse_deg_per_count); // legacy absolute value
-  if (c.mouse_game !== undefined && $('mtGame')) $('mtGame').value = c.mouse_game;
-  if (c.mouse_sens !== undefined && $('mtSens') && document.activeElement !== $('mtSens'))
-    $('mtSens').value = c.mouse_sens;
-  if (c.mouse_turn_sign !== undefined && $('mtInv')) $('mtInv').checked = (c.mouse_turn_sign < 0);
+  if (c.mouse_game !== undefined && $('mtGame'))
+    guardSet('mtGame', () => { $('mtGame').value = c.mouse_game; });
+  if (c.mouse_sens !== undefined && $('mtSens'))
+    guardSet('mtSens', () => { $('mtSens').value = c.mouse_sens; });
+  if (c.mouse_turn_sign !== undefined && $('mtInv'))
+    guardSet('mtInv', () => { $('mtInv').checked = (c.mouse_turn_sign < 0); });
   updateMouseReadout();
   if (c.edge_width !== undefined) set('edgeW', c.edge_width);
   if (c.edge_len !== undefined) set('edgeL', c.edge_len);
   set('dth', Math.round((c.detect_threshold !== undefined ? c.detect_threshold : 0.01)*200)/2);
   set('cburst', Math.round((c.classify_burst !== undefined ? c.classify_burst : 0.005)*200)/2);
-  $('fmerge').checked = c.front_merge !== undefined ? !!c.front_merge : true;
-  $('hideImp').checked = c.hide_impact !== undefined ? !!c.hide_impact : false;
-  $('duckOn').checked = c.duck_enabled !== undefined ? !!c.duck_enabled : true;
+  guardSet('fmerge', () => { $('fmerge').checked = c.front_merge !== undefined ? !!c.front_merge : true; });
+  guardSet('hideImp', () => { $('hideImp').checked = c.hide_impact !== undefined ? !!c.hide_impact : false; });
+  guardSet('duckOn', () => { $('duckOn').checked = c.duck_enabled !== undefined ? !!c.duck_enabled : true; });
   set('duckFire', Math.round((c.duck_fire !== undefined ? c.duck_fire : 0.85)*100));
   set('duckWalk', Math.round((c.duck_walk !== undefined ? c.duck_walk : 0.65)*100));
   set('duckRel', c.duck_release_ms !== undefined ? c.duck_release_ms : 300);
@@ -710,16 +754,21 @@ const post = o => window.chrome.webview.postMessage(o);
 let applyTimer = null;
 function autoApply() {
   clearTimeout(applyTimer);
-  applyTimer = setTimeout(() => post({cmd:'apply', selIn: $('selIn').selectedIndex,
-                                      selOut: $('selOut').selectedIndex,
-                                      config: collectConfig()}), 200);
+  applyTimer = setTimeout(() => {
+    post({cmd:'apply', selIn: $('selIn').selectedIndex,
+          selOut: $('selOut').selectedIndex, config: collectConfig()});
+    clearTouches();
+  }, 200);
 }
 $('content').addEventListener('input', e => {
   if (e.target.type === 'range' || e.target.type === 'checkbox') autoApply();
 });
 $('content').addEventListener('change', e => { if (e.target.tagName === 'SELECT' && e.target.id !== 'preset') autoApply(); });
-$('btnApply').onclick = () => post({cmd:'apply', selIn: $('selIn').selectedIndex,
-                                    selOut: $('selOut').selectedIndex, config: collectConfig()});
+$('btnApply').onclick = () => {
+  post({cmd:'apply', selIn: $('selIn').selectedIndex,
+        selOut: $('selOut').selectedIndex, config: collectConfig()});
+  clearTouches(); // the host has these values now
+};
 $('btnMin').onclick = () => post({cmd:'minimize'});
 $('btnExit').onclick = () => post({cmd:'exit'});
 $('resetW').onclick = () => post({cmd:'resetWeights'});
@@ -782,6 +831,7 @@ function loadPreset(key) {
   });
   post({cmd:'apply', selIn: $('selIn').selectedIndex,
         selOut: $('selOut').selectedIndex, config: cfg});
+  clearTouches(); // the preset replaced the values; let host updates land again
 }
 $('btnPreset').onclick = () => loadPreset($('preset').value);
 
