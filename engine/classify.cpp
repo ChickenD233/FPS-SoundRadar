@@ -3,8 +3,6 @@
 #include "floatcmp.h"
 
 #include <cmath>
-#include <cstdio>
-#include <cstdlib>
 #include <cstring>
 
 namespace sr {
@@ -47,9 +45,6 @@ void ChannelClassifier::Process(const float* x, size_t n, float gain, bool gateO
             sustained_ = false;
         }
         if (nowMs_ >= holdUntilMs_ && held_ != SoundNone) {
-            if (getenv("SR_BURST"))
-                fprintf(stderr, "    GATECLOSE clear held cls=%d at now=%llu\n", (int)held_,
-                        (unsigned long long)nowMs_);
             held_ = SoundNone;
             confident_ = false;
         }
@@ -110,9 +105,6 @@ void ChannelClassifier::Process(const float* x, size_t n, float gain, bool gateO
 }
 
 void ChannelClassifier::OnBurstEnd() {
-    if (getenv("SR_BURST"))
-        fprintf(stderr, "  burst ms=%.0f low=%.5f high=%.5f crest=%.2f\n",
-                burstMs_, burstLow_, burstHigh_, burstCrest_);
     if (sustained_ || FCmpGt(burstMs_, cfg_.maxBurstMs)) return;
 
     bool lowDominant = FCmpGt(burstLow_, cfg_.lowDominantRatio * burstHigh_);
@@ -152,9 +144,6 @@ void ChannelClassifier::OnBurstEnd() {
                     ++pairs;
             }
         }
-        if (getenv("SR_BURST"))
-            fprintf(stderr, "    pairs=%d inWindow=%d n=%d now=%llu\n", pairs, inWindow,
-                    (int)n, (unsigned long long)nowMs_);
         if (pairs >= 2) Classify(SoundFootstep, pairs >= 2 && inWindow >= 3, nowMs_);
     } else if (broadband) {
         // one-shot: no low-band periodicity observed recently
@@ -163,9 +152,6 @@ void ChannelClassifier::OnBurstEnd() {
 }
 
 void ChannelClassifier::Classify(SoundClass cls, bool confident, uint64_t nowMs) {
-    if (getenv("SR_BURST"))
-        fprintf(stderr, "    CLASSIFY cls=%d conf=%d now=%llu\n", (int)cls, confident ? 1 : 0,
-                (unsigned long long)nowMs);
     held_ = cls;
     confident_ = confident;
     holdUntilMs_ = nowMs + static_cast<uint64_t>(cfg_.holdMs);

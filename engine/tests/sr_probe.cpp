@@ -254,8 +254,7 @@ int main(int argc, char** argv) {
             b.pcm[i] = Rand11() * static_cast<float>(DbToLin(-70.0));
         for (int i = 0; i < 3; ++i)
             Burst(b, 0, static_cast<size_t>((2.0 + 0.25 * i) * kFs), DbToLin(-42.0), 200.0, 150.0);
-        Run r = RunPipeline(b, ClsCfg(), ClassifyConfig(),
-                            getenv("SR_TRACE_S5") != nullptr);
+        Run r = RunPipeline(b, ClsCfg(), ClassifyConfig());
         Check(r.obs.step[0], "quiet footsteps after loud ambience -> footstep",
               ClassesOf(r.obs) + " lvl " + std::to_string(r.peakLevel) +
                   " gateBlocks " + std::to_string(r.gateBlocks));
