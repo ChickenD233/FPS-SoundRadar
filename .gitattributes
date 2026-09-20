@@ -1,0 +1,28 @@
+# Git attributes.
+#
+# Purpose: keep the language bar on the repository page honest.
+#
+# driver/sysvad/ is the Microsoft Windows-driver-samples sysvad virtual audio
+# driver sample (MS-PL, see driver/SYSVAD-LICENSE.txt and NOTICE). It is about
+# 425k lines across 276 files and it is vendored, not written here. Without
+# this file GitHub counts it as project code, and the language bar reads as if
+# this repository were a large multi-language driver project instead of a small
+# C++ engine plus one HTML page.
+#
+# driver/toolset-glue/ is likewise a build-time copy of Microsoft build glue,
+# and tools/ carries prebuilt binaries (WebView2 SDK files, gh.exe).
+#
+# Marking a path linguist-vendored excludes it from the language bar and from
+# the statistics. The files stay in the repository, stay searchable, and stay
+# covered by their own licenses.
+
+driver/** linguist-vendored
+tools/** linguist-vendored
+.github/** linguist-documentation
+
+# Markdown files are documentation, not code.
+*.md linguist-documentation
+docs/** linguist-documentation
+
+# No "text eol=" rules on purpose: they would rewrite every source file in the
+# repository on the next commit, which is a large diff for no gain.
