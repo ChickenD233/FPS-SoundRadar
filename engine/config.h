@@ -31,6 +31,18 @@ struct OverlayConfig {
     int duckReleaseMs = 300;  // attenuation tail after key release, ms
     float duckConeDeg = 50.f; // front cone half-angle the attenuation applies to, +-deg
     int arrowFadeMs = 500;    // arrow fade-out after sound stops, ms
+
+    // --- experimental view compensation --------------------------------
+    // Rotate the drawn sound directions by the view angle the player turned, so
+    // an arrow shows where the sound sits relative to the current view. The
+    // mouse-to-degrees factor comes from the same cm/360 figure that pointer
+    // sensitivity sites use to compare games.
+    bool mouseTurn = false;        // master switch (experimental)
+    double mouseCm360 = 30.0;      // centimeters of mouse travel for a 360 turn
+    double mouseDpi = 800.0;       // mouse DPI as set in the mouse software
+    double mouseDegPerCount = 0.0; // hand measure; 0 = compute from cm360+DPI
+    double mouseTurnSign = 1.0;    // 1 or -1, inverts the rotation direction
+    double mouseCalPct = 100.0;    // correction in percent on the computed value
 };
 
 struct AppConfig {

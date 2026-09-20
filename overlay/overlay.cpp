@@ -15,6 +15,7 @@
 #include "overlay.h"
 
 #include "arrow_tracker.h" // ArrowTracker, angle helpers (host-testable)
+#include "mouse_turn.h"    // RotateLevels, MouseDegPerCount
 
 #include "../engine/log.h"          // sr::Log
 #include "../engine/wasapi_util.h" // ComInit
@@ -616,6 +617,10 @@ void Overlay::ThreadMain(bool visible) {
     uint64_t lastTick = GetTickCount64();
     int presentLogCount = 0;
     bool stereoMode_ = false;  // active-channel auto-detect (hysteresis)
+    // Experimental view compensation state.
+    POINT lastMouse = {};
+    bool haveLastMouse = false;
+    double turnYawDeg = 0.0;   // accumulated view rotation, degrees
     float modeTimer_ = 0.0f;
     float timeSec_ = 0.0f;     // shimmer clock (advances only while active)
     float duckAmt_ = 0.0f;     // front-duck envelope 0..1 (fire/walk keys)
@@ -660,9 +665,49 @@ void Overlay::ThreadMain(bool visible) {
 
         // direction input: normalized so gain never clips the channel ratio
         // (only rescales when the loudest channel exceeds 1.0)
-        float dirLevels[8];
+        float rawLevels[8];
         float dirScale = maxLvl > 1.0f ? 1.0f / maxLvl : 1.0f;
-        for (int c = 0; c < 8; ++c) dirLevels[c] = frame.level[c] * dirScale;
+        for (int c = 0; c < 8; ++c) rawLevels[c] = frame.level[c] * dirScale;
+
+        if (!cfg_.mouseTurn) {
+            haveLastMouse = false;
+            turnYawDeg = 0.0;
+        }
+        float dirLevels[8];
+        if (cfg_.mouseTurn && active) {
+            // Turn angle since the previous frame, from the horizontal mouse
+            // motion Windows reports. deg/count comes from the calibration, or
+            // from cm360 + DPI when the calibration is left at 0.
+            double degPerCount = cfg_.mouseDegPerCount;
+            if (degPerCount <= 0.0) {
+                degPerCount = MouseDegPerCount(cfg_.mouseCm360, cfg_.mouseDpi);
+                degPerCount *= cfg_.mouseCalPct / 100.0;
+            }
+            // GetCursorPos reports DPI-scaled screen pixels, not raw counts.
+            // The window DPI tells us the factor without moving the pointer
+            // around (moving it every frame would make the cursor jitter).
+            static const double scaleFactor = [] {
+                const UINT dpi = GetDpiForWindow(GetDesktopWindow());
+                const double f = (dpi > 0) ? static_cast<double>(dpi) / 96.0 : 1.0;
+                return (f < 0.5 || f > 4.0) ? 1.0 : f;
+            }();
+            degPerCount /= scaleFactor;
+            POINT cur = {};
+            if (GetCursorPos(&cur)) {
+                if (haveLastMouse) {
+                    const double dx = static_cast<double>(cur.x - lastMouse.x);
+                    // Ignore a teleport (pointer re-centre, resolution change).
+                    if (std::fabs(dx) < 400.0)
+                        turnYawDeg += dx * degPerCount * cfg_.mouseTurnSign;
+                    turnYawDeg = std::fmod(turnYawDeg, 360.0);
+                }
+                lastMouse = cur;
+                haveLastMouse = true;
+            }
+            RotateLevels(rawLevels, dirLevels, turnYawDeg, kArrowRingCh, kArrowRingAng);
+        } else {
+            for (int c = 0; c < 8; ++c) dirLevels[c] = rawLevels[c];
+        }
 
         // direction estimation; mode = stereo-pan vs 8ch cluster
         uint64_t nowTick = GetTickCount64();
@@ -695,15 +740,20 @@ void Overlay::ThreadMain(bool visible) {
             modeTimer_ = 0.0f;
         }
 
+        // The analyzer reports frame.active only when some channel is above its
+        // threshold, so a false value is real silence (not a quiet passage).
+        // Clear the arrows at once then; the fade tail is for sound that stops
+        // briefly, not for an empty scene.
+        const bool silent = !active;
         if (stereoMode_) {
-            if (active) tracker.UpdateStereo(dirLevels[0], dirLevels[1], dt, cfg_.arrowFadeMs);
-            else tracker.UpdateStereo(0.0f, 0.0f, dt, cfg_.arrowFadeMs); // fade out
-        } else if (active) {
-            tracker.Update(dirLevels, cfg_.detectThreshold, dt, cfg_.frontMerge, cfg_.arrowFadeMs);
+            tracker.UpdateStereo(active ? dirLevels[0] : 0.0f, active ? dirLevels[1] : 0.0f,
+                                 dt, cfg_.arrowFadeMs);
         } else {
             float zeros[8] = {};
-            tracker.Update(zeros, cfg_.detectThreshold, dt, cfg_.frontMerge, cfg_.arrowFadeMs);
+            tracker.Update(active ? dirLevels : zeros, cfg_.detectThreshold, dt,
+                           cfg_.frontMerge, cfg_.arrowFadeMs);
         }
+        if (silent) tracker.Clear();
         if (active) timeSec_ += dt; // shimmer clock pauses when idle
 
         // duck envelope: read-only poll of fire/walk keys, fast attack

@@ -50,6 +50,7 @@ public:
         float trail0 = 0, trail1 = 0; // recent older angles (comet trail)
         float missMs = 0;   // ms since last matched (fade hold + decay)
         bool matched = false;
+        int ownerCh = -1;   // wave channel this arrow follows (-1 = unknown)
     };
 
     // minLevel: display threshold; dt: seconds since last call.
@@ -68,7 +69,7 @@ public:
         }
         // 2) maximal circular runs of adjacent candidates -> one peak each,
         //    centroid = energy-weighted circular mean over run +/- 1 neighbor
-        struct Peak { float angle, energy; };
+        struct Peak { float angle, energy; int ch; bool snap; };
         Peak peaks[4];
         int nPeaks = 0;
         int start = -1;
@@ -81,66 +82,72 @@ public:
                 int a = i, b = i;
                 while (cand[(b + 1) % 7] && (b + 1) % 7 != start) b = (b + 1) % 7;
                 if (a == b && cand[(b + 1) % 7]) break; // all 7: no direction
+
+                // The run itself always votes, and the centre of the run is
+                // exact: a lone FL is -30, a lone SL is -90.
                 double sx = 0, sy = 0;
                 float emax = 0;
-                for (int j = (a + 6) % 7;; j = (j + 1) % 7) {
-                    float lv = levels[kArrowRingCh[j]];
-                    // run +/- 1 neighbor: noise below minLevel gets no vote
-                    bool edge = (j == (a + 6) % 7 || j == (b + 1) % 7);
-                    float w = (edge && lv < minLevel) ? 0.0f : std::sqrt(lv);
-                    float rad = kArrowRingAng[j] * kPiF / 180.0f;
+                int ech = -1;
+                for (int j = a;; j = (j + 1) % 7) {
+                    const float lv = levels[kArrowRingCh[j]];
+                    const float w = std::sqrt(lv);
+                    const float rad = kArrowRingAng[j] * kPiF / 180.0f;
                     sx += w * std::sin(rad);
                     sy += w * std::cos(rad);
-                    if (lv > emax) emax = lv;
-                    if (j == (b + 1) % 7) break;
+                    if (lv > emax) { emax = lv; ech = kArrowRingCh[j]; }
+                    if (j == b) break;
+                }
+                const float runAngle =
+                    ArrowNormAngle(static_cast<float>(std::atan2(sx, sy)) * 180.0f / kPiF);
+                // One ring neighbour may vote, but only when it is clearly part
+                // of the same source (60% of the run peak) and the pair stays
+                // within 90 deg. Without this limit the ring wraps a lone FL
+                // towards FR and drags the arrow about 20 deg off its channel.
+                const int cands[2] = { (a + 6) % 7, (b + 1) % 7 };
+                for (int n = 0; n < 2; ++n) {
+                    const int j = cands[n];
+                    if (j == a || j == b) continue; // run of 6 or 7
+                    const float lv = levels[kArrowRingCh[j]];
+                    if (lv < minLevel || lv < 0.6f * emax) continue;
+                    const float na = kArrowRingAng[j];
+                    if (std::fabs(ArrowAngDist(na, runAngle)) > 90.0f) continue;
+                    const float w = std::sqrt(lv);
+                    const float rad = na * kPiF / 180.0f;
+                    sx += w * std::sin(rad);
+                    sy += w * std::cos(rad);
+                    if (lv > emax) { emax = lv; ech = kArrowRingCh[j]; }
                 }
                 if (nPeaks < 4 && (sx * sx + sy * sy) > 1e-6) {
                     peaks[nPeaks].angle = ArrowNormAngle(
                         static_cast<float>(std::atan2(sx, sy)) * 180.0f / kPiF);
                     peaks[nPeaks].energy = emax;
+                    peaks[nPeaks].ch = ech;
+                    peaks[nPeaks].snap = false;
                     ++nPeaks;
                 }
                 i = (b + 1) % 7;
             } while (i != start && nPeaks < 4);
         }
 
-        // frontal merge: fuse the FL/FR pair (and any peaks closer than 20 deg)
-        // with an energy-weighted circular mean. Two genuinely separate sources
-        // sit at least ±30 deg apart, so they survive.
+        // Frontal merge. Only the FL/FR pair is fused, and the fused pair is
+        // pushed dead ahead at once instead of gliding there: a 50 ms glide
+        // leaves the arrow visibly left or right for about 150 ms, which reads
+        // as a wrong direction. Two genuinely separate sources are at least
+        // 60 deg apart (FL and SL), so they survive.
         if (frontMerge && nPeaks > 1) {
-            bool merged = true;
-            while (merged && nPeaks > 1) {
-                merged = false;
-                for (int a = 0; a < nPeaks && !merged; ++a) {
-                    for (int b = a + 1; b < nPeaks; ++b) {
-                        float d = std::fabs(ArrowAngDist(peaks[a].angle, peaks[b].angle));
-                        bool flfr = (std::fabs(peaks[a].angle + 30.0f) < 1.0f &&
-                                     std::fabs(peaks[b].angle - 30.0f) < 1.0f) ||
-                                    (std::fabs(peaks[a].angle - 30.0f) < 1.0f &&
-                                     std::fabs(peaks[b].angle + 30.0f) < 1.0f);
-                        if (!flfr && d >= 20.0f) continue;
-                        double ra = peaks[a].angle * kPiF / 180.0;
-                        double rb = peaks[b].angle * kPiF / 180.0;
-                        double sx = peaks[a].energy * std::sin(ra) +
-                                    peaks[b].energy * std::sin(rb);
-                        double sy = peaks[a].energy * std::cos(ra) +
-                                    peaks[b].energy * std::cos(rb);
-                        peaks[a].angle = ArrowNormAngle(
-                            static_cast<float>(std::atan2(sx, sy)) * 180.0f / kPiF);
-                        if (peaks[b].energy > peaks[a].energy)
-                            peaks[a].energy = peaks[b].energy;
-                        peaks[b] = peaks[--nPeaks];
-                        merged = true;
-                        break;
-                    }
+            int fi = -1, fj = -1;
+            for (int a = 0; a < nPeaks && fi < 0; ++a) {
+                for (int b = a + 1; b < nPeaks; ++b) {
+                    const bool fl = (peaks[a].ch == 0 && peaks[b].ch == 1) ||
+                                    (peaks[a].ch == 1 && peaks[b].ch == 0);
+                    if (fl) { fi = a; fj = b; break; }
                 }
             }
-            // The merged front pair must sit dead ahead, not at a small offset:
-            // FL louder than FR would otherwise leave the arrow visibly left.
-            if (levels[0] > minLevel && levels[1] > minLevel) {
-                for (int p = 0; p < nPeaks; ++p) {
-                    if (std::fabs(peaks[p].angle) < 45.0f) peaks[p].angle = 0.0f;
-                }
+            if (fi >= 0) {
+                peaks[fi].angle = 0.0f; // the pair sits dead ahead
+                peaks[fi].snap = true;  // and reaches it in one frame, no glide
+                if (peaks[fj].energy > peaks[fi].energy) peaks[fi].energy = peaks[fj].energy;
+                peaks[fj] = peaks[--nPeaks];
             }
         }
 
@@ -152,15 +159,32 @@ public:
             float bestD = 60.0f;
             for (size_t k = 0; k < arrows_.size(); ++k) {
                 if (arrows_[k].matched) continue;
+                // A different channel only matches within 40 deg, so the FL
+                // arrow never becomes the FR arrow (they are 60 deg apart).
+                // Exception: when the old owner channel is quiet, the arrow is
+                // free to be taken over by any channel. Without this, rotating
+                // the view leaves the old arrow behind next to the new one.
+                const int oc = arrows_[k].ownerCh;
+                const bool ownerQuiet = (oc < 0) || (oc < 8 && levels[oc] < minLevel);
+                if (!ownerQuiet && oc >= 0 && peaks[p].ch >= 0 && oc != peaks[p].ch &&
+                    bestD > 40.0f)
+                    bestD = 40.0f;
                 float d = std::fabs(ArrowAngDist(peaks[p].angle, arrows_[k].angle));
                 if (d < bestD) { bestD = d; best = static_cast<int>(k); }
             }
             if (best >= 0) {
                 Arrow& ar = arrows_[best];
                 ar.matched = true;
+                ar.ownerCh = peaks[p].ch;
                 ar.trail1 = ar.trail0;
                 ar.trail0 = ar.angle;
-                ar.angle = ArrowNormAngle(ar.angle + ArrowAngDist(peaks[p].angle, ar.angle) * smoothA);
+                if (peaks[p].snap) {
+                    // A fused front pair jumps to dead ahead at once.
+                    ar.angle = peaks[p].angle;
+                } else {
+                    ar.angle = ArrowNormAngle(ar.angle +
+                                              ArrowAngDist(peaks[p].angle, ar.angle) * smoothA);
+                }
                 ar.strength += (peaks[p].energy - ar.strength) * smoothA;
                 if (ar.pulse > 0.0f) {
                     ar.pulse += dt / 0.15f; // ~150 ms onset ripple
@@ -172,6 +196,7 @@ public:
                 ar.strength = peaks[p].energy;
                 ar.pulse = 0.001f; // onset ripple
                 ar.matched = true;
+                ar.ownerCh = peaks[p].ch;
                 arrows_.push_back(ar);
             }
         }
@@ -180,6 +205,11 @@ public:
     }
 
     const std::vector<Arrow>& Arrows() const { return arrows_; }
+
+    // True silence: drop every arrow now, without the fade tail. The analyzer
+    // reports silence when its gate is shut, so this is a definite "no sound",
+    // not a quiet passage.
+    void Clear() { arrows_.clear(); }
 
     // Stereo input (srcChannels == 2): one indicator sweeping the front.
     // pan = (R-L)/(L+R) -> angle = pan * 90 deg, smoothed like the clusters.
@@ -222,17 +252,28 @@ public:
     }
 
 private:
-    // fading arrows hold full strength for 90 ms, then decay exponentially
-    // with tau = arrowFadeMs/3000 seconds (gone ~arrowFadeMs after the hold)
+    // Arrow lifetime after a match stops. A linear ramp, not an exponential:
+    // an exponential tail needs about 4 tau to fall under the cut-off, so the
+    // old code kept a faint arrow for roughly 600 ms even at the shortest fade
+    // setting, and the field report was "the mark stays after the sound stops".
+    // Total lifetime = hold + fade, and fade is the slider value.
     void FadeArrows(float dt, int arrowFadeMs, bool unmatchedOnly) {
-        float tau = (arrowFadeMs > 0 ? arrowFadeMs : 500) / 3000.0f;
+        const float holdMs = 60.0f;
+        float fadeMs = static_cast<float>(arrowFadeMs > 0 ? arrowFadeMs : 500);
+        if (fadeMs < 100.0f) fadeMs = 100.0f;
         for (size_t k = 0; k < arrows_.size();) {
             Arrow& ar = arrows_[k];
             ar.age += dt;
             if (unmatchedOnly && ar.matched) { ar.missMs = 0.0f; ++k; continue; }
             ar.missMs += dt * 1000.0f;
-            if (ar.missMs > 90.0f)
-                ar.strength *= std::exp(-dt / tau);
+            if (ar.missMs > holdMs) {
+                // Linear ramp to zero over fadeMs.
+                ar.strength -= dt * 1000.0f / fadeMs;
+                if (ar.strength <= 0.0f) {
+                    arrows_.erase(arrows_.begin() + k);
+                    continue;
+                }
+            }
             if (ar.strength < 0.02f) {
                 arrows_.erase(arrows_.begin() + k);
                 continue;

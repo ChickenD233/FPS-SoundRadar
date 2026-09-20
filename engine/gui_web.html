@@ -238,11 +238,10 @@ footer {
   <div class="row"><label>输出</label><select id="selOut"></select></div>
   <div class="row"><label>下混模式</label>
     <select id="selMode">
-      <option value="stereo">7.1 立体声（全景声）</option>
-      <option value="right-mono">右耳单声道 Right-Mono</option>
-      <option value="left-mono">左耳单声道 Left-Mono</option>
+      <option value="stereo">全景声 Stereo（7.1 转双声道）</option>
+      <option value="mono">单声道 Mono（7.1 合成一路）</option>
     </select></div>
-  <div class="hint">立体声：左右耳分开。单声道：全部进一只耳朵</div>
+  <div class="hint">全景声：左右耳分开，保留 7.1 方向感。单声道：8 声道合成一路，两耳听同一份，不分方向</div>
   <div class="row"><label></label><button class="act ghost" id="btnSetDefault" style="flex:1">设为默认输出（系统声音走该设备）</button></div>
 </div>
 
@@ -345,9 +344,30 @@ footer {
 
 <div class="card">
   <h2>8 声道权重 WEIGHTS</h2>
-  <div class="hint" style="margin:0 0 6px">只作用于单声道模式。想某个方向更响就调<b data-p="hi">高</b>那格（100% = 原音量）</div>
+  <div class="hint" style="margin:0 0 6px">只作用于单声道模式。想某个声道更响就调<b data-p="hi">高</b>那格（100% = 原音量）</div>
   <div class="wgrid" id="wgrid"></div>
   <div class="btns" style="margin-top:6px"><button class="act ghost" id="resetW">重置 Reset</button></div>
+</div>
+
+<div class="card">
+  <h2>实验：指针跟随 EXPERIMENTAL · VIEW TURN</h2>
+  <div class="row"><label class="tgl-label">指针跟随转向</label>
+    <label class="tgl"><input type="checkbox" id="mtOn"><span class="tr"></span></label>
+  </div>
+  <div class="hint">开启后，随着你鼠标左右转动视角，声纹也跟着反向转动，指向"相对当前视角"的方向。
+    适合抵消声音延迟。数值不对就先填 DPI 与 cm/360，再用下面两条校正。</div>
+  <div class="row"><label>鼠标 DPI</label><input type="number" id="mtDpi" min="100" max="32000" step="50" style="flex:1;min-width:0;background:var(--card2);color:var(--text);border:1px solid rgba(255,255,255,.08);border-radius:8px;padding:6px 10px;font-family:inherit;font-size:12.5px"><span class="val" id="mtDpiV" style="visibility:hidden"></span></div>
+  <div class="hint">鼠标驱动软件里设置的 DPI（不是你游戏内的灵敏度）</div>
+  <div class="hint" id="mtRead" style="color:var(--accent)"></div>
+  <div class="row"><label>cm / 360°</label><input type="range" id="mtCm" min="5" max="120" step="0.5"><span class="val" id="mtCmV"></span></div>
+  <div class="hint">鼠标在垫子上走多少厘米转一整圈 360°。用 xidaohai 等站点的换算工具，按你当前游戏灵敏度算出这个值</div>
+  <div class="row"><label>灵敏度校正</label><input type="range" id="mtCal" min="50" max="200" step="1"><span class="val" id="mtCalV"></span></div>
+  <div class="hint">按上面的数值算出来的转角若和实际不一致，就拖这条：<b data-p="hi">高</b> = 转得更多（视角更灵敏），<b data-p="lo">低</b> = 转得更少。100% 为按公式计算</div>
+  <div class="row"><label class="tgl-label">反向</label>
+    <label class="tgl"><input type="checkbox" id="mtInv"><span class="tr"></span></label>
+  </div>
+  <div class="hint">如果声纹转向和你的鼠标方向相反，打开这个开关</div>
+  <div class="hint" style="color:var(--hi)">注意：本功能按音频的 8 声道布局取方向，所以转动是按 30°/60° 一档跳的，不是连续的。公开测试版，若游戏不支持原始鼠标输入或开了鼠标加速，需要靠"灵敏度校正"手调。</div>
 </div>
 
 <div class="card">
@@ -417,6 +437,20 @@ function mkMap(loHue, hiHue) {
              glow: `hsla(${h.toFixed(1)}, 100%, 62%, .4)` };
   };
 }
+// Shows the two numbers the feature works from, so a wrong value is visible.
+function updateMouseReadout() {
+  const el = document.getElementById("mtRead");
+  if (!el) return;
+  const dpi = $("mtDpi") ? +$("mtDpi").value : 0;
+  const cm = $("mtCm") ? +$("mtCm").value : 0;
+  const cal = $("mtCal") ? +$("mtCal").value / 100 : 1;
+  if (dpi <= 1 || cm <= 1) { el.textContent = "填入 DPI 与 cm/360 后显示换算结果"; return; }
+  const perTurn = (cm / 2.54) * dpi;
+  const deg = 360 / perTurn;
+  el.innerHTML = `换算结果：每 360° 需要 <b>${Math.round(perTurn)}</b> 个鼠标计数；` +
+                 `每计数 <b>${(deg * cal).toFixed(4)}°</b>（校正 ${Math.round(cal * 100)}%）`;
+}
+
 function paintHint(root) {
   root.querySelectorAll('.hint b[data-p]').forEach(b => {
     b.classList.add(b.dataset.p === 'lo' ? 'lo' : 'hi');
@@ -465,6 +499,9 @@ bindSlider('edgeW', v => v + '%');
 bindSlider('edgeL', v => v + '%');
 bindSlider('dth', v => (v/100).toFixed(2));
 bindSlider('cburst', v => (v/100).toFixed(2));
+bindSlider('mtCm', v => { updateMouseReadout(); return (+v).toFixed(1) + ' cm'; });
+bindSlider('mtCal', v => { updateMouseReadout(); return v + '%'; });
+if ($('mtDpi')) $('mtDpi').addEventListener('input', updateMouseReadout);
 bindSlider('duckFire', v => (v/100).toFixed(2));
 bindSlider('duckWalk', v => (v/100).toFixed(2));
 bindSlider('duckRel', v => v + ' ms');
@@ -504,6 +541,12 @@ function applyState(s) {
   set('low', Math.round(c.overlay_low*100)); set('high', Math.round(c.overlay_high*100));
   set('posX', c.pos_x_pct); set('posY', c.pos_y_pct); set('fx', c.overlay_fx);
   if (c.sensitivity !== undefined) set('sens', Math.round(c.sensitivity*100));
+  if (c.mouse_turn !== undefined && $('mtOn')) $('mtOn').checked = !!c.mouse_turn;
+  if (c.mouse_dpi !== undefined && $('mtDpi')) $('mtDpi').value = Math.round(c.mouse_dpi);
+  if (c.mouse_cm360 !== undefined && $('mtCm')) set('mtCm', c.mouse_cm360);
+  if (c.mouse_cal_pct !== undefined && $('mtCal')) set('mtCal', c.mouse_cal_pct);
+  if (c.mouse_turn_sign !== undefined && $('mtInv')) $('mtInv').checked = (c.mouse_turn_sign < 0);
+  updateMouseReadout();
   if (c.edge_width !== undefined) set('edgeW', c.edge_width);
   if (c.edge_len !== undefined) set('edgeL', c.edge_len);
   set('dth', Math.round((c.detect_threshold !== undefined ? c.detect_threshold : 0.01)*200)/2);
@@ -531,6 +574,14 @@ function applyState(s) {
 function collectConfig() {
   return {
     mode: $('selMode') ? $('selMode').value : 'stereo',
+    mouse_turn: $('mtOn') ? $('mtOn').checked : false,
+    mouse_dpi: $('mtDpi') ? +$('mtDpi').value : 800,
+    mouse_cm360: $('mtCm') ? +$('mtCm').value : 30,
+    // 0 = the engine computes deg/count from DPI and cm/360. The correction
+    // slider is applied in the engine, so one formula serves both places.
+    mouse_deg_per_count: 0,
+    mouse_cal_pct: $('mtCal') ? +$('mtCal').value : 100,
+    mouse_turn_sign: ($('mtInv') && $('mtInv').checked) ? -1 : 1,
     overlay_enabled: $('ovOn').checked,
     classify_enabled: $('clsOn').checked,
     autostart: $('autoOn').checked,

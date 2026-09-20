@@ -470,6 +470,12 @@ void Gui::PushState() {
     addNum("duck_release_ms", cfg.overlay.duckReleaseMs);
     addNum("duck_cone_deg", cfg.overlay.duckConeDeg);
     addNum("arrow_fade_ms", cfg.overlay.arrowFadeMs);
+    j += ",\"mouse_turn\":"; j += cfg.overlay.mouseTurn ? "true" : "false";
+    addNum("mouse_dpi", cfg.overlay.mouseDpi);
+    addNum("mouse_cm360", cfg.overlay.mouseCm360);
+    addNum("mouse_deg_per_count", cfg.overlay.mouseDegPerCount);
+    addNum("mouse_turn_sign", cfg.overlay.mouseTurnSign);
+    addNum("mouse_cal_pct", cfg.overlay.mouseCalPct);
     j += ",\"front_merge\":"; j += cfg.overlay.frontMerge ? "true" : "false";
     j += ",\"hide_impact\":"; j += cfg.overlay.hideImpact ? "true" : "false";
     j += ",\"duck_enabled\":"; j += cfg.overlay.duckEnabled ? "true" : "false";

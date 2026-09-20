@@ -11,6 +11,8 @@
 #include "../floatcmp.h"
 #include "../classify.h"
 #include "../downmix.h"
+#include "../../overlay/arrow_tracker.h"
+#include "../../overlay/mouse_turn.h"
 
 #include <cmath>
 #include <cstdlib>
@@ -264,7 +266,7 @@ int main(int argc, char** argv) {
     }
 
     // ------------------------------------------------- 6) downmix mode matrix
-    std::printf("\n== 6. downmix modes (stereo / right-mono / left-mono) ==\n");
+    std::printf("\n== 6. downmix modes (stereo / mono) ==\n");
     {
         const size_t frames = 9600;
         auto synth = [&](int ch, double freq, double amp, std::vector<float>& in) {
@@ -290,42 +292,76 @@ int main(int argc, char** argv) {
         sr::Downmix8To2(in.data(), out.data(), frames, sc);
         peaks(out, l, r);
         Check(l > 0.15 && r < 0.01, "stereo: FL -> left only");
-
-        sr::DownmixConfig rc;
-        rc.mode = sr::DownmixRightMono;
-        synth(4, 500.0, 0.2, in); // BL: far from the front pair
-        sr::Downmix8To2(in.data(), out.data(), frames, rc);
+        synth(1, 500.0, 0.2, in);
+        sr::Downmix8To2(in.data(), out.data(), frames, sc);
         peaks(out, l, r);
-        Check(r > 0.1 && l == 0.0, "right-mono: BL -> right, left silent");
+        Check(r > 0.15 && l < 0.01, "stereo: FR -> right only");
 
-        sr::DownmixConfig lc;
-        lc.mode = sr::DownmixLeftMono;
-        sr::Downmix8To2(in.data(), out.data(), frames, lc);
+        sr::DownmixConfig mc;
+        mc.mode = sr::DownmixMono;
+        synth(4, 500.0, 0.2, in); // BL: a rear channel must not be lost
+        sr::Downmix8To2(in.data(), out.data(), frames, mc);
         peaks(out, l, r);
-        Check(l > 0.1 && r == 0.0, "left-mono: BL -> left, right silent");
+        Check(l > 0.1 && std::fabs(l - r) < 1e-4, "mono: BL -> identical on both outputs");
 
         bool allCh = true;
-        for (sr::DownmixMode m : { sr::DownmixRightMono, sr::DownmixLeftMono }) {
-            for (int ch = 0; ch < kCh; ++ch) {
-                sr::DownmixConfig c;
-                c.mode = m;
-                synth(ch, 300.0 + 100.0 * ch, 0.2, in);
-                sr::Downmix8To2(in.data(), out.data(), frames, c);
-                peaks(out, l, r);
-                const double active = (m == sr::DownmixRightMono) ? r : l;
-                const double quiet = (m == sr::DownmixRightMono) ? l : r;
-                if (!(active > 0.1 && quiet == 0.0)) allCh = false;
-            }
+        for (int ch = 0; ch < kCh; ++ch) {
+            synth(ch, 300.0 + 100.0 * ch, 0.2, in);
+            sr::Downmix8To2(in.data(), out.data(), frames, mc);
+            peaks(out, l, r);
+            if (!(l > 0.1 && std::fabs(l - r) < 1e-4)) allCh = false;
         }
-        Check(allCh, "both mono modes carry all 8 channels to the active ear");
+        Check(allCh, "mono: all 8 channels reach both outputs");
 
         sr::DownmixMode parsed = sr::DownmixStereo;
-        Check(std::strcmp(sr::DownmixModeName(sr::DownmixLeftMono), "left-mono") == 0 &&
-                  sr::DownmixModeFromName("left-mono", parsed) &&
-                  parsed == sr::DownmixLeftMono &&
-                  !sr::DownmixModeFromName("garbage", parsed) &&
-                  parsed == sr::DownmixLeftMono,
-              "mode names are stable, parse back, and reject unknown names");
+        Check(std::strcmp(sr::DownmixModeName(sr::DownmixMono), "mono") == 0 &&
+                  sr::DownmixModeFromName("mono", parsed) && parsed == sr::DownmixMono &&
+                  sr::DownmixModeFromName("right-mono", parsed) && parsed == sr::DownmixMono &&
+                  sr::DownmixModeFromName("left-mono", parsed) && parsed == sr::DownmixMono &&
+                  !sr::DownmixModeFromName("garbage", parsed),
+              "mode names: mono parses, old one-ear names map to mono, junk rejected");
+    }
+
+    // ------------------------------------------ 7) experimental view turn
+    std::printf("\n== 7. mouse view-turn maths ==\n");
+    {
+        const int* ringCh = sr::kArrowRingCh;
+        const float* ringAng = sr::kArrowRingAng;
+        auto drawn = [&](const float lv[8]) {
+            sr::ArrowTracker t;
+            for (int i = 0; i < 30; ++i) t.Update(lv, 0.02f, 0.016f, false, 500);
+            float best = 999.f, bestS = -1.f;
+            for (const auto& a : t.Arrows())
+                if (a.strength > bestS) { bestS = a.strength; best = a.angle; }
+            return best;
+        };
+        float lv[8] = {};
+        lv[6] = 0.5f; // SL = -90 deg
+        Check(std::fabs(drawn(lv) + 90.0f) < 1.0f, "no turn: SL stays at -90");
+
+        float out[8];
+        sr::RotateLevels(lv, out, 90.0, ringCh, ringAng);
+        Check(std::fabs(drawn(out) + 135.0f) < 1.0f, "a +90 deg view turn moves SL to rear-left");
+
+        bool snapOk = true;
+        for (double yaw : { 0.0, 15.0, 45.0, 90.0, 120.0, -30.0, -75.0 }) {
+            float c[8] = {};
+            c[2] = 0.6f; // centre, a known bearing
+            float r[8];
+            sr::RotateLevels(c, r, yaw, ringCh, ringAng);
+            const double want = std::fmod(-yaw + 540.0, 360.0) - 180.0;
+            const double got = drawn(r);
+            const double err = std::fabs(std::fmod(got - want + 540.0, 360.0) - 180.0);
+            if (err > 31.0) snapOk = false; // the channel layout has 30/60 deg steps
+        }
+        Check(snapOk, "any turn: drawn angle stays within one channel step of bearing - yaw");
+
+        // cm/360 conversion: one full turn of counts is exactly 360 degrees
+        const double d = sr::MouseDegPerCount(30.0, 800.0);
+        Check(std::fabs(d - 360.0 / ((30.0 / 2.54) * 800.0)) < 1e-12,
+              "deg per count = 360 / (cm360/2.54 * dpi)");
+        Check(sr::MouseDegPerCount(0.0, 800.0) == 0.0 && sr::MouseDegPerCount(30.0, 0.0) == 0.0,
+              "unusable DPI or cm360 gives no rotation");
     }
 
     std::printf("\n%s (%d failure(s))\n", g_fail == 0 ? "ALL PROBES PASSED" : "PROBES FAILED",

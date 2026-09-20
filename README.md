@@ -36,11 +36,10 @@ Game → SoundRadar VAD (virtual 7.1 driver) → loopback capture → SoundRadar
 - Overlay refresh: up to ~120 fps while sound is present, ~4 fps when idle.
 - `SoundRadar.exe --sselftest` runs the detection tests (quiet mix, noise rejection, fade, recovery) without audio devices.
 - Overlay: topmost, fully click-through, never steals focus. CPU under 5% while active, near zero when idle.
-- Downmix modes, switchable live from the main window or the tray menu with no restart:
-  - **Stereo (7.1 spatial image)** - the default. Left and right stay separate, so the 7.1 direction image is preserved.
-  - **Right-ear mono** - all eight channels into the right ear, left channel silent.
-  - **Left-ear mono** - all eight channels into the left ear, right channel silent.
-  The two mono modes share the per-channel weight sliders; direction arrows keep working, and pan tracking turns off because the two output channels are no longer a stereo pair.
+- Two downmix modes, switchable live from the main window or the tray menu with no restart:
+  - **Stereo (7.1 spatial image)** - the default. 7.1 folds to two channels and the left/right image is preserved.
+  - **Mono** - all eight channels sum into one signal on both ears. The per-channel weight sliders apply here.
+- Experimental view compensation (off by default). It rotates the drawn sound directions by the view angle you turn, so an arrow shows where a sound sits relative to the view you have now. That cancels the perceived lag on a delayed footstep or gunshot. The mouse-to-degrees factor comes from the same cm/360 figure that pointer-sensitivity sites use to compare games: one count is 360 / (cm360 / 2.54 * dpi) degrees, with a correction slider and an invert switch for games that do not use raw input. The direction set has 7 entries, so the rotation moves in 30 or 60 degree steps.
 - Experimental sound classification: footsteps (100–300 Hz, periodic bursts) and gunshots (broadband transient) get distinct markers.
 - Overlay and classification switches never touch the audio path.
 - Latency target: end-to-end ≤ 30 ms. Measure with `SoundRadar.exe --measure` and `--measure-loopback`. Method: `docs/latency.md`.
@@ -135,11 +134,10 @@ FPS-SoundRadar 提供两个功能：
 - Overlay 刷新率：有声时最高约 120 fps，空闲约 4 fps。
 - `SoundRadar.exe --sselftest` 无需音频设备即可运行检测测试（轻音混音、噪声抑制、渐隐、恢复）。
 - Overlay 置顶、完全点击穿透、不抢焦点。工作时 CPU 低于 5%，空闲接近零。
-- 下混模式可在主窗口或托盘菜单里即时切换，不需要重启：
-  - **7.1 立体声（全景声）**：默认。左右耳分开，7.1 空间感保留，方向最准。
-  - **右耳单声道**：8 个声道全部混进右耳，左声道静音。
-  - **左耳单声道**：8 个声道全部混进左耳，右声道静音。
-  两个单声道模式共用逐声道权重滑块；方向箭头照常工作，左右平移跟踪会自动关闭（因为两声道不再是立体声对）。
+- 两种下混模式，主窗口或托盘菜单里即时切换，不需要重启：
+  - **全景声 Stereo**：默认。7.1 折叠成两声道，保留左右空间感。
+  - **单声道 Mono**：8 个声道合成一路，两耳听同一份；逐声道权重滑块在这里生效。
+- 实验功能：指针跟随转向（默认关闭）。它按你转过的视角角度反向旋转声纹，让箭头指向"相对当前视角"的方位，用来抵消脚步声/枪声的延迟感。鼠标到角度的换算与灵敏度换算站点用的 cm/360 一致：一个计数 = 360 / (cm360 / 2.54 × dpi) 度，另配校正滑块与反向开关。方向集合只有 7 个，所以旋转以 30°/60° 为一步。
 - 实验性声音分类：脚步（100–300 Hz 周期性短促爆发）和枪声（宽带高瞬态）有专用标记。
 - 声纹开关和分类开关对音频链路零影响。
 - 延迟目标：端到端 ≤ 30 ms。用 `SoundRadar.exe --measure` 和 `--measure-loopback` 实测。方法见 `docs/latency.md`。

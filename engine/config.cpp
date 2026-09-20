@@ -13,7 +13,7 @@ namespace sr {
 
 // config file schema version; bump when retuned defaults must overwrite the
 // values old builds persisted (see the migration at the end of LoadConfig).
-constexpr int kConfigVersion = 4;
+constexpr int kConfigVersion = 5;
 
 std::wstring DefaultConfigPath() {
     wchar_t buf[MAX_PATH] = {};
@@ -128,6 +128,7 @@ bool LoadConfig(const std::wstring& path, AppConfig& cfg) {
     GetFloatArray(json, "weights", cfg.downmix.weights, kChannels);
 
     double d;
+    bool b = false;
     if (GetNumber(json, "fade_ms", d)) cfg.analysis.fadeMs = static_cast<int>(d);
     if (GetNumber(json, "activity_threshold", d)) cfg.analysis.activityThreshold = static_cast<float>(d);
     if (GetNumber(json, "peak_threshold", d)) cfg.analysis.peakThreshold = static_cast<float>(d);
@@ -159,6 +160,12 @@ bool LoadConfig(const std::wstring& path, AppConfig& cfg) {
     if (GetNumber(json, "duck_release_ms", d)) cfg.overlay.duckReleaseMs = static_cast<int>(d);
     if (GetNumber(json, "duck_cone_deg", d)) cfg.overlay.duckConeDeg = static_cast<float>(d);
     if (GetNumber(json, "arrow_fade_ms", d)) cfg.overlay.arrowFadeMs = static_cast<int>(d);
+    if (GetBool(json, "mouse_turn", b)) cfg.overlay.mouseTurn = b;
+    if (GetNumber(json, "mouse_cm360", d)) cfg.overlay.mouseCm360 = d;
+    if (GetNumber(json, "mouse_dpi", d)) cfg.overlay.mouseDpi = d;
+    if (GetNumber(json, "mouse_deg_per_count", d)) cfg.overlay.mouseDegPerCount = d;
+    if (GetNumber(json, "mouse_turn_sign", d)) cfg.overlay.mouseTurnSign = d;
+    if (GetNumber(json, "mouse_cal_pct", d)) cfg.overlay.mouseCalPct = d;
     GetBool(json, "classify_enabled", cfg.classifyEnabled);
     if (GetNumber(json, "classify_burst", d)) cfg.classify.burstThreshold = static_cast<float>(d);
     if (GetNumber(json, "classify_low_ratio", d)) cfg.classify.lowDominantRatio = static_cast<float>(d);
@@ -193,6 +200,9 @@ bool LoadConfig(const std::wstring& path, AppConfig& cfg) {
     // migration v4: the default display brightness moved to 2.5, because 2.0
     // read too dark on a low game volume. Do not raise a deliberate low value.
     if (ver < 4 && cfg.overlay.sensitivity < 2.0f) cfg.overlay.sensitivity = 2.5f;
+    // migration v5: the two one-ear modes became one mono mode. The old names
+    // already parse to DownmixMono, and a mode of 0 is the old right-mono value.
+    if (ver < 5 && cfg.downmix.mode == DownmixRightMono) cfg.downmix.mode = DownmixMono;
     return true;
 }
 
@@ -241,6 +251,12 @@ bool SaveConfig(const std::wstring& path, const AppConfig& cfg) {
     f << "  \"duck_release_ms\": " << cfg.overlay.duckReleaseMs << ",\n";
     f << "  \"duck_cone_deg\": " << cfg.overlay.duckConeDeg << ",\n";
     f << "  \"arrow_fade_ms\": " << cfg.overlay.arrowFadeMs << ",\n";
+    f << "  \"mouse_turn\": " << (cfg.overlay.mouseTurn ? "true" : "false") << ",\n";
+    f << "  \"mouse_cm360\": " << cfg.overlay.mouseCm360 << ",\n";
+    f << "  \"mouse_dpi\": " << cfg.overlay.mouseDpi << ",\n";
+    f << "  \"mouse_deg_per_count\": " << cfg.overlay.mouseDegPerCount << ",\n";
+    f << "  \"mouse_turn_sign\": " << cfg.overlay.mouseTurnSign << ",\n";
+    f << "  \"mouse_cal_pct\": " << cfg.overlay.mouseCalPct << ",\n";
     f << "  \"classify_enabled\": " << (cfg.classifyEnabled ? "true" : "false") << ",\n";
     f << "  \"classify_burst\": " << cfg.classify.burstThreshold << ",\n";
     f << "  \"classify_low_ratio\": " << cfg.classify.lowDominantRatio << ",\n";

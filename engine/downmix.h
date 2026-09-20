@@ -1,5 +1,4 @@
-// downmix.h - 7.1 -> stereo / right-mono / left-mono downmix. Pure functions,
-// no Windows deps.
+// downmix.h - 7.1 -> stereo or mono downmix. Pure functions, no Windows deps.
 #pragma once
 
 #include <cstddef>
@@ -10,9 +9,11 @@ namespace sr {
 constexpr int kChannels = 8; // FL FR C LFE BL BR SL SR (KSAUDIO_SPEAKER_7POINT1_SURROUND)
 
 enum DownmixMode {
-    DownmixRightMono = 0, // everything into the RIGHT channel, left stays silent
-    DownmixStereo   = 1,  // ITU-style 7.1 -> 2.0
-    DownmixLeftMono = 2,  // everything into the LEFT channel, right stays silent
+    // Legacy value kept so an old config file still reads: it means the mono
+    // mode below. Nothing writes it any more.
+    DownmixRightMono = 0,
+    DownmixStereo   = 1,  // ITU-style 7.1 -> 2.0, keeps the direction image
+    DownmixMono     = 2,  // all 8 channels summed into one signal, on both ears
 };
 
 struct DownmixConfig {
@@ -23,20 +24,18 @@ struct DownmixConfig {
 
 // Stable names for config, GUI JSON, and --mode. One name for one mode.
 inline const char* DownmixModeName(DownmixMode m) {
-    switch (m) {
-        case DownmixRightMono: return "right-mono";
-        case DownmixLeftMono:  return "left-mono";
-        default:               return "stereo";
-    }
+    return (m == DownmixMono) ? "mono" : "stereo";
 }
 
-// Parses a mode name. Returns false for an unknown name, so a caller can keep
-// its current mode instead of silently switching to the default.
+// Parses a mode name. The two former one-ear names map onto mono, so an old
+// config file keeps working with the sound in one place. Returns false for an
+// unknown name, so a caller can keep its current mode.
 inline bool DownmixModeFromName(const char* s, DownmixMode& out) {
     if (!s || !s[0]) return false;
     if (std::strcmp(s, "stereo") == 0) { out = DownmixStereo; return true; }
-    if (std::strcmp(s, "right-mono") == 0) { out = DownmixRightMono; return true; }
-    if (std::strcmp(s, "left-mono") == 0) { out = DownmixLeftMono; return true; }
+    if (std::strcmp(s, "mono") == 0) { out = DownmixMono; return true; }
+    if (std::strcmp(s, "right-mono") == 0) { out = DownmixMono; return true; } // legacy
+    if (std::strcmp(s, "left-mono") == 0) { out = DownmixMono; return true; }  // legacy
     return false;
 }
 

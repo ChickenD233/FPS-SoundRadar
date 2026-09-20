@@ -14,9 +14,8 @@ namespace sr {
 namespace {
 
 constexpr UINT ID_OPEN_GUI = 1000;
-constexpr UINT ID_MODE_RIGHTMONO = 1001;
 constexpr UINT ID_MODE_STEREO = 1002;
-constexpr UINT ID_MODE_LEFTMONO = 1003;
+constexpr UINT ID_MODE_MONO = 1003;
 constexpr UINT ID_OVERLAY = 1010;
 constexpr UINT ID_CLASSIFY = 1012;
 constexpr UINT ID_AUTOSTART = 1011;
@@ -240,10 +239,8 @@ LRESULT CALLBACK Tray::WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
 
 void Tray::RefreshChecks() {
     if (!menu_) return;
-    const UINT modeId = (mode_ == static_cast<int>(DownmixRightMono)) ? ID_MODE_RIGHTMONO
-                       : (mode_ == static_cast<int>(DownmixLeftMono)) ? ID_MODE_LEFTMONO
-                                                                     : ID_MODE_STEREO;
-    CheckMenuRadioItem(modeMenu_, ID_MODE_RIGHTMONO, ID_MODE_LEFTMONO, modeId, MF_BYCOMMAND);
+    const UINT modeId = (mode_ == static_cast<int>(DownmixMono)) ? ID_MODE_MONO : ID_MODE_STEREO;
+    CheckMenuRadioItem(modeMenu_, ID_MODE_STEREO, ID_MODE_MONO, modeId, MF_BYCOMMAND);
     CheckMenuItem(menu_, ID_OVERLAY, MF_BYCOMMAND | (overlayOn_ ? MF_CHECKED : MF_UNCHECKED));
     CheckMenuItem(menu_, ID_CLASSIFY, MF_BYCOMMAND | (classifyOn_ ? MF_CHECKED : MF_UNCHECKED));
     CheckMenuItem(menu_, ID_AUTOSTART,
@@ -254,9 +251,8 @@ void Tray::ShowMenu() {
     if (!menu_) {
         menu_ = CreatePopupMenu();
         modeMenu_ = CreatePopupMenu();
-        AppendMenuW(modeMenu_, MF_STRING, ID_MODE_STEREO, L"立体声 Stereo");
-        AppendMenuW(modeMenu_, MF_STRING, ID_MODE_RIGHTMONO, L"右耳单声道 Right-Mono");
-        AppendMenuW(modeMenu_, MF_STRING, ID_MODE_LEFTMONO, L"左耳单声道 Left-Mono");
+        AppendMenuW(modeMenu_, MF_STRING, ID_MODE_STEREO, L"全景声 Stereo");
+        AppendMenuW(modeMenu_, MF_STRING, ID_MODE_MONO, L"单声道 Mono");
         AppendMenuW(menu_, MF_STRING, ID_OPEN_GUI, L"打开主界面 Open");
         AppendMenuW(menu_, MF_SEPARATOR, 0, nullptr);
         AppendMenuW(menu_, MF_POPUP, reinterpret_cast<UINT_PTR>(modeMenu_), L"模式 Mode");
@@ -288,13 +284,9 @@ LRESULT Tray::HandleMessage(UINT msg, WPARAM wp, LPARAM lp) {
                     if (handlers_.onOpenGui) handlers_.onOpenGui();
                     return 0;
                 case ID_MODE_STEREO:
-                case ID_MODE_RIGHTMONO:
-                case ID_MODE_LEFTMONO:
-                    mode_ = (LOWORD(wp) == ID_MODE_RIGHTMONO)
-                                ? static_cast<int>(DownmixRightMono)
-                                : (LOWORD(wp) == ID_MODE_LEFTMONO
-                                       ? static_cast<int>(DownmixLeftMono)
-                                       : static_cast<int>(DownmixStereo));
+                case ID_MODE_MONO:
+                    mode_ = (LOWORD(wp) == ID_MODE_MONO) ? static_cast<int>(DownmixMono)
+                                                         : static_cast<int>(DownmixStereo);
                     if (handlers_.onMode) handlers_.onMode(mode_);
                     return 0;
                 case ID_OVERLAY:

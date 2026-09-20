@@ -81,7 +81,7 @@ bool EnsureSingleInstance() {
 
 void PrintUsage() {
     std::printf(
-        "SoundRadar - 7.1 capture, metering, stereo/left-mono/right-mono downmix, overlay\n"
+        "SoundRadar - 7.1 capture, metering, stereo/mono downmix, overlay\n"
         "\n"
         "usage: SoundRadar.exe [options]\n"
         "  (no args)              main window + tray + engine\n"
@@ -101,7 +101,7 @@ void PrintUsage() {
         "  --set-default          make the capture device's render twin the default output\n"
         "  --list-devices         list capture and render endpoints\n"
         "  --output <name>        render endpoint name substring\n"
-        "  --mode <m>             stereo | right-mono | left-mono (overrides config)\n"
+        "  --mode <m>             stereo | mono (overrides config)\n"
         "  --config <path>        config file (default %%APPDATA%%\\SoundRadar\\config.json)\n"
         "  --help                 this text\n");
 }
@@ -1613,11 +1613,12 @@ int wmain(int argc, wchar_t** argv) {
     }
     if (!outputOverride.empty()) cfg.outputDevice = outputOverride;
     if (!modeOverride.empty()) {
-        if (modeOverride == L"right-mono") cfg.downmix.mode = sr::DownmixRightMono;
-        else if (modeOverride == L"left-mono") cfg.downmix.mode = sr::DownmixLeftMono;
-        else if (modeOverride == L"stereo") cfg.downmix.mode = sr::DownmixStereo;
+        if (modeOverride == L"stereo") cfg.downmix.mode = sr::DownmixStereo;
+        else if (modeOverride == L"mono" || modeOverride == L"right-mono" ||
+                 modeOverride == L"left-mono")
+            cfg.downmix.mode = sr::DownmixMono; // the old one-ear names mean mono
         else {
-            fwprintf(stderr, L"--mode must be stereo, right-mono, or left-mono\n");
+            fwprintf(stderr, L"--mode must be stereo or mono\n");
             return 1;
         }
     }
